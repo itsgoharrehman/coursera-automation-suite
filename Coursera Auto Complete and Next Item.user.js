@@ -26,6 +26,7 @@
     let doneUrls = new Set();
     let uiReady = false;
     let navTimestamp = 0;
+    let waitingForAssignment = false;
 
     // =============================================
     // URL TYPE DETECTION
@@ -38,15 +39,46 @@
         if (path.includes('/supplement'))        return 'reading';
         if (path.includes('/quiz'))              return 'quiz';
         if (path.includes('/exam'))              return 'quiz';
+        if (path.includes('/assignment'))        return 'assignment';
         if (path.includes('/ungradedlab'))       return 'lab';
         if (path.includes('/ungradedwidget'))    return 'lab';
         if (path.includes('/gradedlti'))         return 'lab';
         if (path.includes('/ungradedlti'))       return 'lab';
         if (path.includes('/discussionprompt'))  return 'discussion';
+        if (path.includes('/dialogue'))          return 'dialogue';
         if (path.includes('/peer'))              return 'peer';
         if (path.includes('/programming'))       return 'programming';
         if (path.includes('/item'))              return 'generic';
         return 'unknown';
+    }
+
+    function isAssignmentPage() {
+        const type = getPageType();
+        if (['quiz', 'assignment', 'peer', 'programming'].includes(type)) return true;
+        const path = location.pathname.toLowerCase();
+        if (path.includes('/graded')) return true;
+        const h1 = document.querySelector('h1, h2');
+        const headerText = h1 ? h1.textContent.toLowerCase() : '';
+        if (headerText.includes('assignment') || headerText.includes('graded quiz')) return true;
+        return false;
+    }
+
+    function isAssignmentCompleted() {
+        const bodyText = (document.body ? document.body.textContent : '').toLowerCase();
+        const hasCompletionText = bodyText.includes('passed') ||
+                                  bodyText.includes('submitted') ||
+                                  bodyText.includes('grade:') ||
+                                  bodyText.includes('your score') ||
+                                  bodyText.includes('view feedback') ||
+                                  bodyText.includes('try again') ||
+                                  bodyText.includes('congratulations');
+        const nextBtn = findNextItem();
+        const markBtn = findMarkComplete();
+        const submitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']);
+        if (nextBtn && (!submitBtn || hasCompletionText || markBtn)) {
+            return true;
+        }
+        return false;
     }
 
     // =============================================
@@ -214,6 +246,14 @@
         );
     }
 
+    function findDialogueStart() {
+        return findBtn(
+            ['start dialogue', 'start conversation', 'begin dialogue', 'start discussion', 'reply', 'respond', 'join discussion', 'add response', 'create response', 'write a response'],
+            ['Start Dialogue', 'Start dialogue', 'Start Conversation', 'Start Discussion', 'Reply', 'Respond', 'Join Discussion'],
+            ['[data-test="start-dialogue-button"]', '[data-testid="start-dialogue"]', 'button[aria-label*="dialogue"]', 'button[aria-label*="Dialogue"]', '[data-test="start-discussion-button"]', '[data-testid="start-discussion"]']
+        );
+    }
+
     function findDiscussionEnd() {
         return findBtn(
             ['end discussion', 'end dialogue', 'close discussion', 'close dialogue',
@@ -222,6 +262,14 @@
              'Finish Discussion', 'Finish Dialogue', 'Done'],
             ['[data-test="end-discussion-button"]', '[data-testid="end-discussion"]',
              'button[aria-label*="End"]']
+        );
+    }
+
+    function findDialogueEnd() {
+        return findBtn(
+            ['end dialogue', 'end conversation', 'finish dialogue', 'end discussion', 'close dialogue', 'close discussion', 'finish discussion', 'done'],
+            ['End Dialogue', 'End dialogue', 'End Conversation', 'Finish Dialogue', 'End Discussion', 'Close Dialogue'],
+            ['[data-test="end-dialogue-button"]', '[data-testid="end-dialogue"]', 'button[aria-label*="End dialogue"]', 'button[aria-label*="End Dialogue"]', '[data-test="end-discussion-button"]']
         );
     }
 
@@ -243,7 +291,13 @@
     // --- Confirmation Modal (Yes / Confirm / OK) ---
     function findConfirmBtn() {
         return findBtnPartial([
-            'yes, end', 'yes,end', 'yes end', 'confirm', 'yes'
+            'yes, end dialogue', 'yes, end', 'yes,end', 'yes end dialogue', 'yes end', 'confirm', 'yes'
+        ]);
+    }
+
+    function findDialogueConfirm() {
+        return findBtnPartial([
+            'yes, end dialogue', 'yes, end', 'yes,end', 'yes end dialogue', 'yes end', 'confirm'
         ]);
     }
 
@@ -303,26 +357,30 @@
     }
 
     async function handleDiscussion() {
-        // 1. Click start discussion / reply
-        const start = findDiscussionStart();
+        await handleDialogue();
+    }
+
+    async function handleDialogue() {
+        // 1. Click start dialogue / conversation / discussion
+        const start = findDialogueStart() || findDiscussionStart();
         if (start) {
             start.click();
-            toast('Discussion started');
+            toast('Dialogue started');
             await sleep(1500);
         }
 
-        // 2. Click end discussion
-        let end = await waitForBtn(findDiscussionEnd, 5000);
+        // 2. Click end dialogue / discussion
+        let end = await waitForBtn(() => findDialogueEnd() || findDiscussionEnd(), 5000);
         if (end) {
             end.click();
-            toast('Ending discussion...');
+            toast('Ending dialogue...');
             await sleep(1000);
 
-            // 3. Confirmation modal
-            const confirm = await waitForBtn(findConfirmBtn, 3000);
+            // 3. Click "Yes, end dialogue" / confirmation modal
+            const confirm = await waitForBtn(() => findDialogueConfirm() || findConfirmBtn(), 3000);
             if (confirm) {
                 confirm.click();
-                toast('Confirmed');
+                toast('Confirmed end dialogue');
                 await sleep(800);
             }
         }
@@ -339,6 +397,17 @@
         if (isAuto) {
             const elapsed = Date.now() - navTimestamp;
             if (elapsed < AFTER_NAV_WAIT) return;
+        }
+
+        // Uncompleted assignment check
+        if (isAuto && isAssignmentPage() && !isAssignmentCompleted()) {
+            if (!waitingForAssignment) {
+                waitingForAssignment = true;
+                autoEnabled = false;
+                updateUi();
+                toast('Assignment detected: Auto paused');
+            }
+            return;
         }
 
         isRunning = true;
@@ -358,22 +427,12 @@
                 await handleLab();
             }
 
-            // DISCUSSION: /discussionPrompt pages
-            if (pageType === 'discussion' || findDiscussionStart()) {
-                await handleDiscussion();
+            // DISCUSSION / DIALOGUE: /discussionPrompt, /dialogue, or dialogue/discussion buttons
+            if (pageType === 'discussion' || pageType === 'dialogue' || findDiscussionStart() || findDialogueStart()) {
+                await handleDialogue();
             }
 
-            // QUIZ / EXAM: Skip — don't auto-submit answers
-            // (just mark complete + next if available)
-
-            // PEER REVIEW: Skip — don't auto-submit
-            // (just mark complete + next if available)
-
-            // PROGRAMMING: Skip — don't auto-submit
-            // (just mark complete + next if available)
-
-            // READING / GENERIC / UNKNOWN: no special handling needed
-            // just fall through to mark complete + next
+            // QUIZ / EXAM / ASSIGNMENT / PEER / PROGRAMMING: Skip auto-submit (handled via assignment wait logic)
 
             // --- Universal: Mark Complete ---
             let mark = await waitForBtn(findMarkComplete, 2000);
@@ -390,7 +449,7 @@
                 toast('Next item');
                 doneUrls.add(url);
                 navTimestamp = Date.now();
-            } else if (!mark && pageType === 'unknown' && !hasVideoElement() && !findLabLaunch() && !findDiscussionStart()) {
+            } else if (!mark && pageType === 'unknown' && !hasVideoElement() && !findLabLaunch() && !findDiscussionStart() && !findDialogueStart()) {
                 toast('Nothing to do');
             }
 
@@ -408,12 +467,43 @@
     function startScan() {
         stopScan();
         scanTimer = setInterval(() => {
-            if (!autoEnabled || isRunning) return;
+            if (isRunning) return;
+
+            // Check assignment page state
+            if (isAssignmentPage()) {
+                if (autoEnabled && !waitingForAssignment) {
+                    if (!isAssignmentCompleted()) {
+                        waitingForAssignment = true;
+                        autoEnabled = false;
+                        updateUi();
+                        toast('Assignment detected: Auto paused. Complete to continue.');
+                        return;
+                    }
+                }
+
+                if (waitingForAssignment) {
+                    if (isAssignmentCompleted()) {
+                        toast('Assignment completed! Resuming auto mode...');
+                        waitingForAssignment = false;
+                        autoEnabled = true;
+                        updateUi();
+                        doIt(true);
+                    }
+                    return;
+                }
+            } else {
+                if (waitingForAssignment) {
+                    waitingForAssignment = false;
+                    updateUi();
+                }
+            }
+
+            if (!autoEnabled) return;
             if (doneUrls.has(location.href)) return;
             if (Date.now() - navTimestamp < AFTER_NAV_WAIT) return;
 
             // Trigger if anything actionable exists
-            if (hasVideoElement() || findLabLaunch() || findSideBySide() || findDiscussionStart()
+            if (hasVideoElement() || findLabLaunch() || findSideBySide() || findDiscussionStart() || findDialogueStart()
                 || findMarkComplete() || findNextItem()) {
                 doIt(true);
             }
@@ -433,6 +523,10 @@
             lastUrl = location.href;
             navTimestamp = Date.now();
             isRunning = false;
+            if (waitingForAssignment && !isAssignmentPage()) {
+                waitingForAssignment = false;
+                updateUi();
+            }
         }
     }, 800);
 
@@ -441,6 +535,7 @@
     // =============================================
 
     function toggleAuto() {
+        waitingForAssignment = false;
         autoEnabled = !autoEnabled;
         localStorage.setItem('tm_auto', autoEnabled ? 'true' : 'false');
         updateUi();
@@ -601,7 +696,12 @@
     function updateUi() {
         const b = document.getElementById('tm-auto');
         if (!b) return;
-        if (autoEnabled) {
+        if (waitingForAssignment) {
+            b.textContent = 'Auto: Paused (Assignment)';
+            Object.assign(b.style, { background: '#2e1005', color: '#fb923c', borderColor: '#c2410c', border: '1px solid #c2410c' });
+            b.onmouseenter = () => b.style.background = '#431407';
+            b.onmouseleave = () => Object.assign(b.style, { background: '#2e1005' });
+        } else if (autoEnabled) {
             b.textContent = 'Auto Skip: ON';
             Object.assign(b.style, { background: '#0a1a0a', color: '#4ade80', borderColor: '#16a34a', border: '1px solid #16a34a' });
             b.onmouseenter = () => b.style.background = '#0f2a0f';
