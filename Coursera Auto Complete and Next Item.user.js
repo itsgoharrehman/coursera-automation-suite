@@ -278,8 +278,30 @@
                 }
                 if (dlgEnd) {
                     dlgEnd.click();
-                    toast('Discussion ended');
+                    toast('Ending discussion...');
                     await sleep(1000);
+
+                    // Confirmation modal: "Yes, end dialogue" / "Yes" / "Confirm"
+                    let confirm = null;
+                    for (let i = 0; i < 10; i++) {
+                        // Search modals/overlays for confirm button
+                        const allBtns = document.querySelectorAll('button, [role="button"]');
+                        for (const b of allBtns) {
+                            const t = (b.textContent || '').trim().toLowerCase();
+                            if ((t.includes('yes') || t === 'confirm' || t === 'ok' || t === 'end dialogue' || t === 'yes, end dialogue' || t === 'yes, end discussion')
+                                && !b.disabled && b.offsetParent !== null) {
+                                confirm = b;
+                                break;
+                            }
+                        }
+                        if (confirm) break;
+                        await sleep(300);
+                    }
+                    if (confirm) {
+                        confirm.click();
+                        toast('Confirmed end');
+                        await sleep(800);
+                    }
                 }
 
                 // Re-check mark complete after dialogue
