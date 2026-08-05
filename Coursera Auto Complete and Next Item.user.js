@@ -86,6 +86,22 @@
         return false;
     }
 
+    function hasActiveSubmitOrStart() {
+        const btns = document.querySelectorAll('button, [role="button"], input[type="submit"], a');
+        for (let i = 0; i < btns.length; i++) {
+            const el = btns[i];
+            if (el.disabled || el.offsetParent === null) continue;
+            if (el.closest('#tm-bar, #tm-t')) continue;
+            const t = (el.textContent || el.value || '').trim().toLowerCase();
+            if (t.includes('submit assignment') || t.includes('submit quiz') || t.includes('start assignment') ||
+                t.includes('resume assignment') || t.includes('start quiz') || t.includes('attempt assignment') ||
+                (t === 'submit' && !el.closest('[role="dialog"], [class*="Modal"], [class*="modal"]'))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function isElementVisible(el) {
         if (!el) return false;
         if (el.offsetParent === null && window.getComputedStyle(el).position !== 'fixed') return false;
@@ -98,7 +114,8 @@
 
     function isAnyModalOpen() {
         const modals = document.querySelectorAll('[role="dialog"], [class*="Modal"], [class*="modal"], [class*="Overlay"], [class*="overlay"]');
-        for (const m of modals) {
+        for (let i = 0; i < modals.length; i++) {
+            const m = modals[i];
             if (m.id === 'tm-bar' || m.id === 'tm-t') continue;
             if (isElementVisible(m)) {
                 const text = (m.textContent || '').toLowerCase();
@@ -108,17 +125,6 @@
             }
         }
         return false;
-    }
-
-    function isSubmissionFinished() {
-        // If modal popup is currently visible, NOT finished
-        if (isAnyModalOpen()) return false;
-
-        // If user hasn't clicked submit at least once, NOT finished
-        if (!userIsSubmitting) return false;
-
-        // User clicked submit and modal is closed -> finished!
-        return true;
     }
 
     function isAlreadyCompletedAssignment() {
@@ -472,12 +478,14 @@
         }
 
         // Strict Guard: On unsubmitted assignment page, do NOT execute doIt in auto mode
-        if (isAuto && isAssignmentPage() && !isSubmissionFinished() && !isAlreadyCompletedAssignment()) {
-            waitingForAssignment = true;
-            autoEnabled = false;
-            updateUi();
-            toast('Assignment page — Auto paused.');
-            return;
+        if (isAuto && (isAssignmentPage() || hasActiveSubmitOrStart())) {
+            if (isAnyModalOpen() || hasActiveSubmitOrStart()) {
+                waitingForAssignment = true;
+                autoEnabled = false;
+                updateUi();
+                toast('Assignment page — Auto paused.');
+                return;
+            }
         }
 
         isRunning = true;
@@ -503,14 +511,14 @@
             }
 
             // --- Universal: Mark Complete ---
-            if (isAuto && isAssignmentPage() && !isSubmissionFinished() && !isAlreadyCompletedAssignment()) {
+            if (isAuto && (isAssignmentPage() || hasActiveSubmitOrStart()) && (isAnyModalOpen() || hasActiveSubmitOrStart())) {
                 return;
             }
 
             let mark = await waitForBtn(findMarkComplete, 2000);
 
             // Safety re-check after await
-            if (isAuto && isAssignmentPage() && !isSubmissionFinished() && !isAlreadyCompletedAssignment()) {
+            if (isAuto && (isAssignmentPage() || hasActiveSubmitOrStart()) && (isAnyModalOpen() || hasActiveSubmitOrStart())) {
                 return;
             }
 
@@ -521,7 +529,7 @@
             }
 
             // --- Universal: Go to Next Item ---
-            if (isAuto && isAssignmentPage() && !isSubmissionFinished() && !isAlreadyCompletedAssignment()) {
+            if (isAuto && (isAssignmentPage() || hasActiveSubmitOrStart()) && (isAnyModalOpen() || hasActiveSubmitOrStart())) {
                 return;
             }
 
@@ -553,23 +561,29 @@
             if (doneUrls.has(location.href)) return;
             if (Date.now() - navTimestamp < AFTER_NAV_WAIT) return;
 
+            const onAssignment = isAssignmentPage() || hasActiveSubmitOrStart();
+
             // Check assignment page state
-            if (isAssignmentPage()) {
-                // 1. If modal popup is currently visible, stay paused and wait
-                if (isAnyModalOpen()) {
-                    return;
+            if (onAssignment) {
+                // 1. If modal popup is open OR active submit/start button exists: stay strictly paused
+                if (isAnyModalOpen() || hasActiveSubmitOrStart()) {
+                    if (autoEnabled || !waitingForAssignment) {
+                        waitingForAssignment = true;
+                        autoEnabled = false;
+                        updateUi();
+                        toast('Assignment page — Auto paused.');
+                    }
+                    return; // STRICT PAUSE
                 }
 
-                // 2. If user clicked submit and modal is closed (or already completed assignment)
-                if (waitingForAssignment && (userIsSubmitting || isAlreadyCompletedAssignment())) {
+                // 2. Modal closed AND no active submit/start button -> Assignment finished!
+                if (waitingForAssignment || !autoEnabled) {
                     const nextBtn = findNextItem();
                     if (nextBtn) {
                         toast('Assignment completed! Moving to next item...');
                         doneUrls.add(location.href);
                         navTimestamp = Date.now();
                         waitingForAssignment = false;
-                        userIsSubmitting = false;
-                        submitClickCount = 0;
                         autoEnabled = true;
                         updateUi();
                         nextBtn.click();
@@ -577,20 +591,9 @@
                     }
                     return; // Next button is loading on screen, keep polling
                 }
-
-                // 3. User is working on assignment before submitting: strictly pause
-                if (autoEnabled || !waitingForAssignment) {
-                    waitingForAssignment = true;
-                    autoEnabled = false;
-                    updateUi();
-                    toast('Assignment page — Auto paused.');
-                }
-                return;
             } else {
                 if (waitingForAssignment) {
                     waitingForAssignment = false;
-                    userIsSubmitting = false;
-                    submitClickCount = 0;
                     updateUi();
                 }
             }
