@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Coursera Autopilot
 // @namespace    http://tampermonkey.net/
-// @version      5.0
-// @description  Two buttons: manual "Do It" and "Auto" toggle. Handles video and non-video pages.
+// @version      6.0
+// @description  Complete Coursera autopilot. Handles ALL activity types: videos, readings, labs, discussions, quizzes, peer reviews, and more.
 // @author       Antigravity
 // @match        *://*.coursera.org/*
 // @grant        none
@@ -11,22 +11,46 @@
 (function () {
     'use strict';
 
+    // --- Configuration ---
     const SECONDS_FROM_END = 3;
-    const CLICK_DELAY = 400;           // Wait 400ms after clicks
-    const AFTER_NAV_WAIT = 1800;       // Wait 1.8s after page nav before acting
-    const VIDEO_LOAD_TIMEOUT = 6000;   // Max 6s wait for video metadata
-    const SCAN_INTERVAL = 1200;        // Check every 1.2s
+    const CLICK_DELAY = 400;
+    const AFTER_NAV_WAIT = 1800;
+    const VIDEO_LOAD_TIMEOUT = 6000;
+    const SCAN_INTERVAL = 1200;
 
+    // --- State ---
     let autoEnabled = localStorage.getItem('tm_auto') === 'true';
     let isRunning = false;
     let scanTimer = null;
     let lastUrl = location.href;
     let doneUrls = new Set();
     let uiReady = false;
-    let navTimestamp = 0;  // When the last navigation happened
+    let navTimestamp = 0;
 
     // =============================================
-    // VIDEO HELPERS
+    // URL TYPE DETECTION
+    // Coursera URLs: /learn/[course]/[type]/[id]
+    // =============================================
+
+    function getPageType() {
+        const path = location.pathname.toLowerCase();
+        if (path.includes('/lecture'))           return 'video';
+        if (path.includes('/supplement'))        return 'reading';
+        if (path.includes('/quiz'))              return 'quiz';
+        if (path.includes('/exam'))              return 'quiz';
+        if (path.includes('/ungradedlab'))       return 'lab';
+        if (path.includes('/ungradedwidget'))    return 'lab';
+        if (path.includes('/gradedlti'))         return 'lab';
+        if (path.includes('/ungradedlti'))       return 'lab';
+        if (path.includes('/discussionprompt'))  return 'discussion';
+        if (path.includes('/peer'))              return 'peer';
+        if (path.includes('/programming'))       return 'programming';
+        if (path.includes('/item'))              return 'generic';
+        return 'unknown';
+    }
+
+    // =============================================
+    // VIDEO
     // =============================================
 
     function getLoadedVideo() {
@@ -58,7 +82,6 @@
         });
     }
 
-    // Poll until video metadata loads or timeout
     function waitVideoLoad() {
         return new Promise(resolve => {
             const t0 = Date.now();
@@ -66,30 +89,27 @@
                 const v = getLoadedVideo();
                 if (v) return resolve(v);
                 if (Date.now() - t0 > VIDEO_LOAD_TIMEOUT) return resolve(null);
-                setTimeout(poll, 600);
+                setTimeout(poll, 500);
             };
             poll();
         });
     }
 
     // =============================================
-    // BUTTON HELPERS
+    // UNIVERSAL BUTTON FINDER
     // =============================================
 
     function findBtn(texts, arias, selectors) {
-        // Try aria-label
         for (const a of arias) {
             const b = document.querySelector(`button[aria-label="${a}"], [role="button"][aria-label="${a}"]`);
             if (b && !b.disabled && b.offsetParent !== null) return b;
         }
-        // Try text match
         for (const el of document.querySelectorAll('button, [role="button"]')) {
             const t = (el.textContent || '').trim().toLowerCase();
             for (const s of texts) {
                 if (t === s && !el.disabled && el.offsetParent !== null) return el;
             }
         }
-        // Try selectors
         for (const s of selectors) {
             const b = document.querySelector(s);
             if (b && !b.disabled && b.offsetParent !== null) return b;
@@ -97,40 +117,47 @@
         return null;
     }
 
-    function findLabLaunch() {
-        return findBtn(
-            ['launch app', 'launch lab', 'open lab', 'start lab', 'open workspace', 'launch workspace'],
-            ['Launch App', 'Launch Lab', 'Open Lab', 'Start Lab', 'Open Workspace', 'Launch Workspace'],
-            ['[data-test="launch-app-button"]', '[data-testid="launch-lab"]', 'button[aria-label*="Lab"]']
-        );
+    // Helper: find button by partial text match (for modals/dynamic text)
+    function findBtnPartial(partials) {
+        for (const el of document.querySelectorAll('button, [role="button"]')) {
+            if (el.disabled || el.offsetParent === null) continue;
+            const t = (el.textContent || '').trim().toLowerCase();
+            for (const p of partials) {
+                if (t.includes(p.toLowerCase())) return el;
+            }
+        }
+        return null;
     }
 
-    function findSideBySide() {
-        return findBtn(
-            ['learn side-by-side', 'learn side by side', 'launch side by side', 'open side by side', 'side by side', 'launch in split view', 'open in split view'],
-            ['Learn side-by-side', 'Learn side by side', 'Launch side by side', 'Open side by side', 'Side by side', 'Launch in split view', 'Open in split view'],
-            ['[data-test="launch-side-by-side-button"]', '[data-testid="side-by-side"]']
-        );
+    // Poll for a button to appear (up to maxMs)
+    function waitForBtn(finderFn, maxMs = 3000) {
+        return new Promise(resolve => {
+            const t0 = Date.now();
+            const poll = () => {
+                const b = finderFn();
+                if (b) return resolve(b);
+                if (Date.now() - t0 > maxMs) return resolve(null);
+                setTimeout(poll, 300);
+            };
+            poll();
+        });
     }
 
-    // Helper to open side-by-side in a new tab without interrupting autopilot on current tab
-    function openInNewTab(element) {
-        if (!element) return;
-        const href = element.href || element.getAttribute('href');
+    function openInNewTab(el) {
+        if (!el) return;
+        const href = el.href || el.getAttribute('href');
         if (href && href !== '#' && !href.startsWith('javascript:')) {
             window.open(href, '_blank');
         } else {
-            // Trigger Ctrl+Click / Cmd+Click to force opening in new tab
-            const evt = new MouseEvent('click', {
-                bubbles: true,
-                cancelable: true,
-                ctrlKey: true,
-                metaKey: true
-            });
-            element.dispatchEvent(evt);
+            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, metaKey: true }));
         }
     }
 
+    // =============================================
+    // BUTTON FINDERS FOR EACH ACTIVITY TYPE
+    // =============================================
+
+    // --- Navigation ---
     function findMarkComplete() {
         return findBtn(
             ['mark as completed', 'mark as complete', 'mark completed', 'mark complete'],
@@ -147,195 +174,228 @@
         );
     }
 
-    function findDialogueStart() {
+    // --- Lab ---
+    function findLabLaunch() {
         return findBtn(
-            ['start discussion', 'reply', 'respond', 'start dialogue', 'join discussion', 'add response', 'create response'],
-            ['Start Discussion', 'Reply', 'Respond', 'Start Dialogue', 'Join Discussion', 'Add Response', 'Create Response'],
-            ['[data-test="start-discussion-button"]', '[data-testid="start-discussion"]', 'button[aria-label*="discussion"]', 'button[aria-label*="Discussion"]']
+            ['launch app', 'launch lab', 'open lab', 'start lab', 'open workspace', 'launch workspace', 'open tool'],
+            ['Launch App', 'Launch Lab', 'Open Lab', 'Start Lab', 'Open Workspace', 'Launch Workspace', 'Open Tool'],
+            ['[data-test="launch-app-button"]', '[data-testid="launch-lab"]', 'button[aria-label*="Launch"]']
         );
     }
 
-    function findDialogueEnd() {
+    function findSideBySide() {
         return findBtn(
-            ['submit', 'end discussion', 'post', 'save', 'done', 'close', 'post reply', 'submit reply'],
-            ['Submit', 'End Discussion', 'Post', 'Save', 'Done', 'Close', 'Post Reply', 'Submit Reply'],
-            ['[data-test="submit-discussion-button"]', '[data-testid="submit-discussion"]']
+            ['learn side-by-side', 'learn side by side', 'launch side by side', 'open side by side', 'side by side',
+             'side-by-side learning', 'launch in split view', 'open in split view'],
+            ['Learn side-by-side', 'Learn side by side', 'Launch side by side', 'Open side by side',
+             'Side by side', 'Launch in split view', 'Open in split view'],
+            ['[data-test="launch-side-by-side-button"]', '[data-testid="side-by-side"]']
         );
+    }
+
+    function findOpenBtn() {
+        // The "Open" button on the lab choice page (alternative to side-by-side)
+        return findBtn(
+            ['open'],
+            ['Open'],
+            []
+        );
+    }
+
+    // --- Discussion / Dialogue ---
+    function findDiscussionStart() {
+        return findBtn(
+            ['start discussion', 'reply', 'respond', 'start dialogue', 'join discussion',
+             'add response', 'create response', 'write a response'],
+            ['Start Discussion', 'Reply', 'Respond', 'Start Dialogue', 'Join Discussion',
+             'Add Response', 'Create Response', 'Write a Response'],
+            ['[data-test="start-discussion-button"]', '[data-testid="start-discussion"]',
+             'button[aria-label*="discussion"]', 'button[aria-label*="Discussion"]']
+        );
+    }
+
+    function findDiscussionEnd() {
+        return findBtn(
+            ['end discussion', 'end dialogue', 'close discussion', 'close dialogue',
+             'finish discussion', 'finish dialogue', 'done'],
+            ['End Discussion', 'End Dialogue', 'Close Discussion', 'Close Dialogue',
+             'Finish Discussion', 'Finish Dialogue', 'Done'],
+            ['[data-test="end-discussion-button"]', '[data-testid="end-discussion"]',
+             'button[aria-label*="End"]']
+        );
+    }
+
+    // --- Checkbox (Honor Code / Agreement) ---
+    function checkAgreementCheckbox() {
+        const checkboxes = document.querySelectorAll('input[type="checkbox"]:not(:checked)');
+        for (const cb of checkboxes) {
+            if (cb.offsetParent === null) continue;
+            const parent = cb.closest('label') || cb.parentElement;
+            const text = (parent ? parent.textContent : '').toLowerCase();
+            if (text.includes('agree') || text.includes('honor') || text.includes('responsib') || text.includes('i accept')) {
+                cb.click();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // --- Confirmation Modal (Yes / Confirm / OK) ---
+    function findConfirmBtn() {
+        return findBtnPartial([
+            'yes, end', 'yes,end', 'yes end', 'confirm', 'yes'
+        ]);
     }
 
     // =============================================
-    // THE ONE FLOW — handles video, lab, dialogue, and non-video
+    // PAGE-SPECIFIC HANDLERS
+    // =============================================
+
+    async function handleVideo() {
+        if (!hasVideoElement()) return;
+        toast('Loading video...');
+        const video = await waitVideoLoad();
+        if (!video) return;
+        if (skipVideo(video)) toast('Skipped to last ' + SECONDS_FROM_END + 's');
+        toast('Playing last seconds...');
+        await videoEnded(video);
+        toast('Video done');
+        await sleep(800);
+    }
+
+    async function handleLab() {
+        // 1. Check agreement checkbox
+        if (checkAgreementCheckbox()) {
+            toast('Checkbox checked');
+            await sleep(500);
+        }
+
+        // 2. Find and click Launch button (may need to wait for it to enable)
+        let lab = findLabLaunch();
+        if (!lab) {
+            // Check if there's a disabled launch button waiting for checkbox
+            const disabled = document.querySelector('button[disabled]');
+            if (disabled && (disabled.textContent || '').toLowerCase().includes('launch')) {
+                lab = await waitForBtn(findLabLaunch, 2000);
+            }
+        }
+        if (lab) {
+            lab.click();
+            toast('Lab launched');
+            await sleep(1500);
+        }
+
+        // 3. Side-by-side or Open button
+        let sbs = findSideBySide();
+        if (sbs) {
+            openInNewTab(sbs);
+            toast('Side-by-side (new tab)');
+            await sleep(800);
+        } else {
+            // Try the "Open" button as fallback
+            const openBtn = findOpenBtn();
+            if (openBtn) {
+                openInNewTab(openBtn);
+                toast('Opened (new tab)');
+                await sleep(800);
+            }
+        }
+    }
+
+    async function handleDiscussion() {
+        // 1. Click start discussion / reply
+        const start = findDiscussionStart();
+        if (start) {
+            start.click();
+            toast('Discussion started');
+            await sleep(1500);
+        }
+
+        // 2. Click end discussion
+        let end = await waitForBtn(findDiscussionEnd, 5000);
+        if (end) {
+            end.click();
+            toast('Ending discussion...');
+            await sleep(1000);
+
+            // 3. Confirmation modal
+            const confirm = await waitForBtn(findConfirmBtn, 3000);
+            if (confirm) {
+                confirm.click();
+                toast('Confirmed');
+                await sleep(800);
+            }
+        }
+    }
+
+    // =============================================
+    // THE ONE FLOW — handles ALL activity types
     // =============================================
 
     async function doIt(isAuto) {
         if (isRunning) return;
         if (isAuto && doneUrls.has(location.href)) return;
 
-        // If auto, make sure enough time passed since last navigation
         if (isAuto) {
             const elapsed = Date.now() - navTimestamp;
-            if (elapsed < AFTER_NAV_WAIT) {
-                return; // Not enough time since page changed, wait more
-            }
+            if (elapsed < AFTER_NAV_WAIT) return;
         }
 
         isRunning = true;
         const url = location.href;
+        const pageType = getPageType();
 
         try {
-            // STEP 1: Is there a video on this page?
-            if (hasVideoElement()) {
-                toast('Loading video...');
+            // --- Handle by page type ---
 
-                // Wait for video to actually load its metadata
-                const video = await waitVideoLoad();
-
-                if (video) {
-                    // Skip to last N seconds
-                    if (skipVideo(video)) toast('Skipped to last ' + SECONDS_FROM_END + 's');
-
-                    // Wait for video to actually finish playing
-                    toast('Playing last seconds...');
-                    await videoEnded(video);
-                    toast('Video done');
-                    await sleep(1000); // Let Coursera update its UI
-                }
+            // VIDEO: /lecture pages or any page with a <video> element
+            if (pageType === 'video' || hasVideoElement()) {
+                await handleVideo();
             }
 
-            // STEP 2: Lab & Side-by-Side Handling
-            // 0. Check the honor code / agreement checkbox if present
-            const checkbox = document.querySelector(
-                'input[type="checkbox"]:not(:checked)'
-            );
-            if (checkbox && checkbox.offsetParent !== null) {
-                // Check if it's the agreement checkbox (near "I agree" text)
-                const parent = checkbox.closest('label') || checkbox.parentElement;
-                const text = (parent ? parent.textContent : '').toLowerCase();
-                if (text.includes('agree') || text.includes('honor') || text.includes('responsib')) {
-                    checkbox.click();
-                    toast('Checkbox checked');
-                    await sleep(500); // Wait for Launch App button to enable
-                }
+            // LAB: /ungradedLab, /ungradedWidget, /gradedLti, /ungradedLti
+            if (pageType === 'lab' || findLabLaunch()) {
+                await handleLab();
             }
 
-            // 1. Click "Launch App" / "Launch Lab" if present
-            let lab = findLabLaunch();
-            // If button is disabled, wait briefly for it to enable (after checkbox)
-            if (!lab) {
-                // Try finding even disabled ones
-                const disabledLab = document.querySelector('button[disabled]');
-                if (disabledLab) {
-                    const t = (disabledLab.textContent || '').trim().toLowerCase();
-                    if (t.includes('launch')) {
-                        // Checkbox might not have taken effect yet, wait
-                        for (let i = 0; i < 6; i++) {
-                            await sleep(300);
-                            lab = findLabLaunch();
-                            if (lab) break;
-                        }
-                    }
-                }
-            }
-            if (lab) {
-                lab.click();
-                toast('Lab Launched');
-                await sleep(1500); // Wait for "Learn side-by-side" screen/button to render
+            // DISCUSSION: /discussionPrompt pages
+            if (pageType === 'discussion' || findDiscussionStart()) {
+                await handleDiscussion();
             }
 
-            // 2. Then click "Learn side-by-side" in a NEW TAB if present
-            let sbs = findSideBySide();
-            if (sbs) {
-                openInNewTab(sbs);
-                toast('Side-by-Side (New Tab)');
-                await sleep(1000);
-            }
+            // QUIZ / EXAM: Skip — don't auto-submit answers
+            // (just mark complete + next if available)
 
-            // Poll briefly for "Mark as Completed" to appear after launching lab
-            let mark = findMarkComplete();
-            if (!mark && (lab || sbs)) {
-                for (let i = 0; i < 10; i++) { // wait up to 3s for Mark Complete button
-                    await sleep(300);
-                    mark = findMarkComplete();
-                    if (mark) break;
-                }
-            }
+            // PEER REVIEW: Skip — don't auto-submit
+            // (just mark complete + next if available)
 
-            // STEP 3: Dialogue / Discussion Prompt Handling
-            const dlgStart = findDialogueStart();
-            if (dlgStart) {
-                dlgStart.click();
-                toast('Discussion started');
-                await sleep(1500); // Wait for discussion UI to load
+            // PROGRAMMING: Skip — don't auto-submit
+            // (just mark complete + next if available)
 
-                // Poll for End/Submit button
-                let dlgEnd = findDialogueEnd();
-                if (!dlgEnd) {
-                    for (let i = 0; i < 10; i++) {
-                        await sleep(500);
-                        dlgEnd = findDialogueEnd();
-                        if (dlgEnd) break;
-                    }
-                }
-                if (dlgEnd) {
-                    dlgEnd.click();
-                    toast('Ending discussion...');
-                    await sleep(1000);
+            // READING / GENERIC / UNKNOWN: no special handling needed
+            // just fall through to mark complete + next
 
-                    // Confirmation modal: "Yes, end dialogue" / "Yes" / "Confirm"
-                    let confirm = null;
-                    for (let i = 0; i < 10; i++) {
-                        // Search modals/overlays for confirm button
-                        const allBtns = document.querySelectorAll('button, [role="button"]');
-                        for (const b of allBtns) {
-                            const t = (b.textContent || '').trim().toLowerCase();
-                            if ((t.includes('yes') || t === 'confirm' || t === 'ok' || t === 'end dialogue' || t === 'yes, end dialogue' || t === 'yes, end discussion')
-                                && !b.disabled && b.offsetParent !== null) {
-                                confirm = b;
-                                break;
-                            }
-                        }
-                        if (confirm) break;
-                        await sleep(300);
-                    }
-                    if (confirm) {
-                        confirm.click();
-                        toast('Confirmed end');
-                        await sleep(800);
-                    }
-                }
-
-                // Re-check mark complete after dialogue
-                if (!mark) {
-                    for (let i = 0; i < 10; i++) {
-                        await sleep(300);
-                        mark = findMarkComplete();
-                        if (mark) break;
-                    }
-                }
-            }
-
-            // STEP 4: Mark as complete (if button exists)
+            // --- Universal: Mark Complete ---
+            let mark = await waitForBtn(findMarkComplete, 2000);
             if (mark) {
                 mark.click();
                 toast('Marked complete');
                 await sleep(CLICK_DELAY);
             }
 
-            // STEP 5: Go to next item
+            // --- Universal: Go to Next Item ---
             const next = findNextItem();
             if (next) {
                 next.click();
                 toast('Next item');
                 doneUrls.add(url);
                 navTimestamp = Date.now();
-            } else if (!mark && !lab && !sbs && !dlgStart && !hasVideoElement()) {
+            } else if (!mark && pageType === 'unknown' && !hasVideoElement() && !findLabLaunch() && !findDiscussionStart()) {
                 toast('Nothing to do');
             }
 
         } finally {
-            // Keep set small
             if (doneUrls.size > 200) doneUrls = new Set([...doneUrls].slice(-50));
-
             await sleep(AFTER_NAV_WAIT);
             isRunning = false;
         }
@@ -350,12 +410,11 @@
         scanTimer = setInterval(() => {
             if (!autoEnabled || isRunning) return;
             if (doneUrls.has(location.href)) return;
-
-            // Don't act until AFTER_NAV_WAIT has passed since last navigation
             if (Date.now() - navTimestamp < AFTER_NAV_WAIT) return;
 
-            // Only trigger if there's something to act on
-            if (hasVideoElement() || findLabLaunch() || findSideBySide() || findDialogueStart() || findMarkComplete() || findNextItem()) {
+            // Trigger if anything actionable exists
+            if (hasVideoElement() || findLabLaunch() || findSideBySide() || findDiscussionStart()
+                || findMarkComplete() || findNextItem()) {
                 doIt(true);
             }
         }, SCAN_INTERVAL);
@@ -366,13 +425,13 @@
     }
 
     // =============================================
-    // URL WATCHER
+    // URL WATCHER (SPA navigation)
     // =============================================
 
     setInterval(() => {
         if (location.href !== lastUrl) {
             lastUrl = location.href;
-            navTimestamp = Date.now(); // Reset — new page is loading
+            navTimestamp = Date.now();
             isRunning = false;
         }
     }, 800);
@@ -387,9 +446,9 @@
         updateUi();
         toast(autoEnabled ? 'Auto: ON' : 'Auto: OFF');
         if (autoEnabled) {
-            navTimestamp = Date.now(); // Reset so it waits before first action
+            navTimestamp = Date.now();
             isRunning = false;
-            doneUrls.delete(location.href); // Allow re-processing current page
+            doneUrls.delete(location.href);
             startScan();
         } else {
             stopScan();
@@ -397,7 +456,7 @@
     }
 
     // =============================================
-    // UI — Two buttons only
+    // UI — Two buttons, draggable, green toast
     // =============================================
 
     function toast(msg) {
@@ -459,12 +518,11 @@
             bar.style.transform = 'translateX(-50%)';
         }
 
-        // --- Drag logic ---
+        // Drag logic
         let isDragging = false;
         let dragStartX, dragStartY, barStartX, barStartY;
 
         bar.addEventListener('mousedown', (e) => {
-            // Only drag from the bar itself, not from buttons
             if (e.target.tagName === 'BUTTON') return;
             isDragging = true;
             bar.style.cursor = 'grabbing';
@@ -473,7 +531,6 @@
             const rect = bar.getBoundingClientRect();
             barStartX = rect.left;
             barStartY = rect.top;
-            // Clear default positioning so left/top work
             bar.style.bottom = '';
             bar.style.right = '';
             bar.style.transform = '';
@@ -486,7 +543,6 @@
             const dy = e.clientY - dragStartY;
             let newX = barStartX + dx;
             let newY = barStartY + dy;
-            // Clamp to viewport
             const rect = bar.getBoundingClientRect();
             newX = Math.max(0, Math.min(newX, window.innerWidth - rect.width));
             newY = Math.max(0, Math.min(newY, window.innerHeight - rect.height));
@@ -498,7 +554,6 @@
             if (!isDragging) return;
             isDragging = false;
             bar.style.cursor = 'grab';
-            // Save position
             const rect = bar.getBoundingClientRect();
             localStorage.setItem('tm_bar_pos', JSON.stringify({ x: rect.left, y: rect.top }));
         });
@@ -559,7 +614,6 @@
         }
     }
 
-    // Debounced UI check
     let uiTmr = null;
     function ensureUi() {
         if (uiTmr) return;
@@ -583,7 +637,7 @@
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
     function init() {
-        navTimestamp = Date.now(); // Page just loaded
+        navTimestamp = Date.now();
         createUi();
 
         const obs = new MutationObserver(() => ensureUi());
