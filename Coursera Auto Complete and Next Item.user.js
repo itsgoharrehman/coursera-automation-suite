@@ -29,16 +29,16 @@
     let waitingForAssignment = false;
     let assignmentSubmitted = false;
 
-    // Track user clicking Submit on assignment/quiz
+    // Track user clicking Submit on assignment/quiz (including modal confirm buttons)
     document.addEventListener('click', (e) => {
         const target = e.target;
         if (!target) return;
         const btn = target.closest('button, [role="button"], input[type="submit"]');
         if (btn) {
             const text = (btn.textContent || btn.value || '').toLowerCase();
-            if (text.includes('submit')) {
+            if (text.includes('submit') || text.includes('confirm') || text.includes('yes')) {
                 assignmentSubmitted = true;
-                toast('Submit clicked. Waiting for results...');
+                toast('Submit recorded. Waiting for next item...');
             }
         }
     }, true);
@@ -78,11 +78,38 @@
         return false;
     }
 
+    function isSubmissionModalOpen() {
+        const modal = document.querySelector('[role="dialog"], .rc-Modal, .cds-Modal-container, [data-test="modal"]');
+        if (!modal) return false;
+        const text = (modal.textContent || '').toLowerCase();
+        return text.includes('submit') || text.includes('confirm') || text.includes('are you sure');
+    }
+
+    function isRealSubmissionResults() {
+        if (isSubmissionModalOpen()) return false;
+
+        const hasQuizInputs = document.querySelectorAll('input[type="radio"]:not([disabled]), input[type="checkbox"]:not([disabled]), textarea:not([disabled])').length > 0;
+        const hasSubmitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']) !== null;
+        if (hasSubmitBtn || hasQuizInputs) return false;
+
+        const hasGradeBadge = document.querySelector('[data-test="grade-badge"], [data-testid="grade-badge"], [data-test="pass-badge"], .rc-QuizResults, .rc-AssignmentFeedback') !== null;
+        const bodyText = (document.body ? document.body.textContent : '').toLowerCase();
+        const hasResultsText = bodyText.includes('passed') ||
+                               bodyText.includes('grade:') ||
+                               bodyText.includes('your score') ||
+                               bodyText.includes('view feedback') ||
+                               bodyText.includes('try again') ||
+                               bodyText.includes('congratulations');
+
+        return hasGradeBadge || hasResultsText || (assignmentSubmitted && !hasSubmitBtn && !hasQuizInputs);
+    }
+
     function isUnsubmittedAssignment() {
         if (!isAssignmentPage()) return false;
-        if (assignmentSubmitted) return false;
+        if (isSubmissionModalOpen()) return true;
+        if (isRealSubmissionResults()) return false;
 
-        const hasQuizInputs = document.querySelectorAll('input[type="radio"], input[type="checkbox"], textarea').length > 0;
+        const hasQuizInputs = document.querySelectorAll('input[type="radio"]:not([disabled]), input[type="checkbox"]:not([disabled]), textarea:not([disabled])').length > 0;
         const hasSubmitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']) !== null;
         const hasStartBtn = findBtnPartial(['start assignment', 'resume assignment', 'start quiz', 'attempt assignment', 'start']) !== null;
 
@@ -504,6 +531,30 @@
 
             // Check assignment page state
             if (isAssignmentPage()) {
+                // 1. If modal is currently open, stay paused and wait
+                if (isSubmissionModalOpen()) {
+                    return;
+                }
+
+                // 2. If user submitted assignment in this session and modal closed
+                if (waitingForAssignment && assignmentSubmitted) {
+                    const nextBtn = findNextItem();
+                    if (nextBtn) {
+                        toast('Assignment submitted! Moving to next item...');
+                        waitingForAssignment = false;
+                        assignmentSubmitted = false;
+                        autoEnabled = true;
+                        updateUi();
+                        nextBtn.click();
+                        doneUrls.add(location.href);
+                        navTimestamp = Date.now();
+                        return;
+                    }
+                    // Next button is loading after submit, keep waiting
+                    return;
+                }
+
+                // 3. Unsubmitted assignment (user is working on assignment)
                 if (isUnsubmittedAssignment()) {
                     if (autoEnabled && !waitingForAssignment) {
                         waitingForAssignment = true;
@@ -511,24 +562,23 @@
                         updateUi();
                         toast('Assignment page — Auto paused.');
                     }
-                    return; // STRICTLY STOP: Do not touch next button on unsubmitted assignment
+                    return;
                 }
 
+                // 4. Completed assignment from previous session
                 if (waitingForAssignment) {
-                    if (assignmentSubmitted) {
-                        const nextBtn = findNextItem();
-                        if (nextBtn) {
-                            toast('Assignment submitted! Moving to next item...');
-                            waitingForAssignment = false;
-                            assignmentSubmitted = false;
-                            autoEnabled = true;
-                            updateUi();
-                            nextBtn.click();
-                            doneUrls.add(location.href);
-                            navTimestamp = Date.now();
-                        }
+                    const nextBtn = findNextItem();
+                    if (nextBtn) {
+                        toast('Moving to next item...');
+                        waitingForAssignment = false;
+                        assignmentSubmitted = false;
+                        autoEnabled = true;
+                        updateUi();
+                        nextBtn.click();
+                        doneUrls.add(location.href);
+                        navTimestamp = Date.now();
+                        return;
                     }
-                    return;
                 }
             } else {
                 if (waitingForAssignment) {
