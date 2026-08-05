@@ -550,6 +550,8 @@
         stopScan();
         scanTimer = setInterval(() => {
             if (isRunning) return;
+            if (doneUrls.has(location.href)) return;
+            if (Date.now() - navTimestamp < AFTER_NAV_WAIT) return;
 
             // Check assignment page state
             if (isAssignmentPage()) {
@@ -563,14 +565,14 @@
                     const nextBtn = findNextItem();
                     if (nextBtn) {
                         toast('Assignment completed! Moving to next item...');
+                        doneUrls.add(location.href);
+                        navTimestamp = Date.now();
                         waitingForAssignment = false;
                         userIsSubmitting = false;
                         submitClickCount = 0;
                         autoEnabled = true;
                         updateUi();
                         nextBtn.click();
-                        doneUrls.add(location.href);
-                        navTimestamp = Date.now();
                         return;
                     }
                     return; // Next button is loading on screen, keep polling
@@ -594,8 +596,6 @@
             }
 
             if (!autoEnabled) return;
-            if (doneUrls.has(location.href)) return;
-            if (Date.now() - navTimestamp < AFTER_NAV_WAIT) return;
 
             // Trigger if anything actionable exists
             if (hasVideoElement() || findLabLaunch() || findSideBySide() || findDiscussionStart() || findDialogueStart()
