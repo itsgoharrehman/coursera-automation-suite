@@ -229,6 +229,11 @@
 
     // --- Lab ---
     function findLabLaunch() {
+        const btnPartial = findBtnPartial([
+            'launch app', 'launch lab', 'open lab', 'start lab', 'open workspace', 'launch workspace', 'open tool', 'launch'
+        ]);
+        if (btnPartial) return btnPartial;
+
         return findBtn(
             ['launch app', 'launch lab', 'open lab', 'start lab', 'open workspace', 'launch workspace', 'open tool'],
             ['Launch App', 'Launch Lab', 'Open Lab', 'Start Lab', 'Open Workspace', 'Launch Workspace', 'Open Tool'],
@@ -298,12 +303,27 @@
     function checkAgreementCheckbox() {
         const checkboxes = document.querySelectorAll('input[type="checkbox"]:not(:checked)');
         for (const cb of checkboxes) {
-            if (cb.offsetParent === null) continue;
             const parent = cb.closest('label') || cb.parentElement;
             const text = (parent ? parent.textContent : '').toLowerCase();
-            if (text.includes('agree') || text.includes('honor') || text.includes('responsib') || text.includes('i accept')) {
+            const bodyText = (cb.form ? cb.form.textContent : (parent ? parent.textContent : '')).toLowerCase();
+            if (text.includes('agree') || text.includes('honor') || text.includes('responsib') || text.includes('i accept') || bodyText.includes('honor code') || bodyText.includes('responsibly')) {
                 cb.click();
+                if (parent && !cb.checked) parent.click();
                 return true;
+            }
+        }
+        for (const label of document.querySelectorAll('label')) {
+            const text = label.textContent.toLowerCase();
+            if (text.includes('agree') || text.includes('honor') || text.includes('responsib') || text.includes('responsibly')) {
+                const cb = label.querySelector('input[type="checkbox"]');
+                if (cb && !cb.checked) {
+                    cb.click();
+                    label.click();
+                    return true;
+                } else if (!cb) {
+                    label.click();
+                    return true;
+                }
             }
         }
         return false;
@@ -341,19 +361,12 @@
     async function handleLab() {
         // 1. Check agreement checkbox
         if (checkAgreementCheckbox()) {
-            toast('Checkbox checked');
-            await sleep(500);
+            toast('Agreement checked');
+            await sleep(800);
         }
 
-        // 2. Find and click Launch button (may need to wait for it to enable)
-        let lab = findLabLaunch();
-        if (!lab) {
-            // Check if there's a disabled launch button waiting for checkbox
-            const disabled = document.querySelector('button[disabled]');
-            if (disabled && (disabled.textContent || '').toLowerCase().includes('launch')) {
-                lab = await waitForBtn(findLabLaunch, 2000);
-            }
-        }
+        // 2. Find and click Launch button (wait for it to enable)
+        let lab = await waitForBtn(findLabLaunch, 3000);
         if (lab) {
             lab.click();
             toast('Lab launched');
@@ -367,7 +380,6 @@
             toast('Side-by-side (new tab)');
             await sleep(800);
         } else {
-            // Try the "Open" button as fallback
             const openBtn = findOpenBtn();
             if (openBtn) {
                 openInNewTab(openBtn);
