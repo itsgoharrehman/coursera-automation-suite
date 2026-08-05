@@ -203,8 +203,39 @@
             }
 
             // STEP 2: Lab & Side-by-Side Handling
-            // 1. First click "Launch Lab" / "Launch App" if present
+            // 0. Check the honor code / agreement checkbox if present
+            const checkbox = document.querySelector(
+                'input[type="checkbox"]:not(:checked)'
+            );
+            if (checkbox && checkbox.offsetParent !== null) {
+                // Check if it's the agreement checkbox (near "I agree" text)
+                const parent = checkbox.closest('label') || checkbox.parentElement;
+                const text = (parent ? parent.textContent : '').toLowerCase();
+                if (text.includes('agree') || text.includes('honor') || text.includes('responsib')) {
+                    checkbox.click();
+                    toast('Checkbox checked');
+                    await sleep(500); // Wait for Launch App button to enable
+                }
+            }
+
+            // 1. Click "Launch App" / "Launch Lab" if present
             let lab = findLabLaunch();
+            // If button is disabled, wait briefly for it to enable (after checkbox)
+            if (!lab) {
+                // Try finding even disabled ones
+                const disabledLab = document.querySelector('button[disabled]');
+                if (disabledLab) {
+                    const t = (disabledLab.textContent || '').trim().toLowerCase();
+                    if (t.includes('launch')) {
+                        // Checkbox might not have taken effect yet, wait
+                        for (let i = 0; i < 6; i++) {
+                            await sleep(300);
+                            lab = findLabLaunch();
+                            if (lab) break;
+                        }
+                    }
+                }
+            }
             if (lab) {
                 lab.click();
                 toast('Lab Launched');
