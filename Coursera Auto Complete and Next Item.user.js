@@ -27,6 +27,21 @@
     let uiReady = false;
     let navTimestamp = 0;
     let waitingForAssignment = false;
+    let assignmentSubmitted = false;
+
+    // Track user clicking Submit on assignment/quiz
+    document.addEventListener('click', (e) => {
+        const target = e.target;
+        if (!target) return;
+        const btn = target.closest('button, [role="button"], input[type="submit"]');
+        if (btn) {
+            const text = (btn.textContent || btn.value || '').toLowerCase();
+            if (text.includes('submit')) {
+                assignmentSubmitted = true;
+                toast('Submit clicked. Waiting for results...');
+            }
+        }
+    }, true);
 
     // =============================================
     // URL TYPE DETECTION
@@ -63,22 +78,19 @@
         return false;
     }
 
-    function isAssignmentCompleted() {
-        const bodyText = (document.body ? document.body.textContent : '').toLowerCase();
-        const hasCompletionText = bodyText.includes('passed') ||
-                                  bodyText.includes('submitted') ||
-                                  bodyText.includes('grade:') ||
-                                  bodyText.includes('your score') ||
-                                  bodyText.includes('view feedback') ||
-                                  bodyText.includes('try again') ||
-                                  bodyText.includes('congratulations');
-        const nextBtn = findNextItem();
-        const markBtn = findMarkComplete();
-        const submitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']);
-        if (nextBtn && (!submitBtn || hasCompletionText || markBtn)) {
+    function isUnsubmittedAssignment() {
+        if (!isAssignmentPage()) return false;
+        if (assignmentSubmitted) return false;
+
+        const hasQuizInputs = document.querySelectorAll('input[type="radio"], input[type="checkbox"], textarea').length > 0;
+        const hasSubmitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']) !== null;
+        const hasStartBtn = findBtnPartial(['start assignment', 'resume assignment', 'start quiz', 'attempt assignment', 'start']) !== null;
+
+        if (hasQuizInputs || hasSubmitBtn || hasStartBtn) {
             return true;
         }
-        return false;
+
+        return !assignmentSubmitted;
     }
 
     // =============================================
@@ -203,6 +215,15 @@
             ['go to next item', 'next item', 'go to next', 'continue', 'next'],
             ['Go to next item', 'Go To Next Item', 'Next Item', 'Next', 'Go to next'],
             ['[data-test="next-item-button"]', '[data-testid="next-button"]']
+        );
+    }
+
+    // --- Assignment ---
+    function findAssignmentStart() {
+        return findBtn(
+            ['start assignment', 'resume assignment', 'start quiz', 'attempt assignment', 'start', 'resume', 'begin assignment', 'open assignment'],
+            ['Start assignment', 'Resume assignment', 'Start quiz', 'Attempt assignment', 'Start Assignment', 'Resume Assignment', 'Start', 'Resume'],
+            ['[data-test="start-assignment-button"]', '[data-testid="start-assignment"]', 'button[aria-label*="assignment"]', 'button[aria-label*="Assignment"]']
         );
     }
 
@@ -400,12 +421,12 @@
         }
 
         // Uncompleted assignment check
-        if (isAuto && isAssignmentPage() && !isAssignmentCompleted()) {
+        if (isAuto && isUnsubmittedAssignment()) {
             if (!waitingForAssignment) {
                 waitingForAssignment = true;
                 autoEnabled = false;
                 updateUi();
-                toast('Assignment detected: Auto paused');
+                toast('Assignment page — Auto paused.');
             }
             return;
         }
@@ -471,29 +492,36 @@
 
             // Check assignment page state
             if (isAssignmentPage()) {
-                if (autoEnabled && !waitingForAssignment) {
-                    if (!isAssignmentCompleted()) {
+                if (isUnsubmittedAssignment()) {
+                    if (autoEnabled && !waitingForAssignment) {
                         waitingForAssignment = true;
                         autoEnabled = false;
                         updateUi();
-                        toast('Assignment detected: Auto paused. Complete to continue.');
-                        return;
+                        toast('Assignment page — Auto paused.');
                     }
+                    return; // STRICTLY STOP: Do not touch next button on unsubmitted assignment
                 }
 
                 if (waitingForAssignment) {
-                    if (isAssignmentCompleted()) {
-                        toast('Assignment completed! Resuming auto mode...');
-                        waitingForAssignment = false;
-                        autoEnabled = true;
-                        updateUi();
-                        doIt(true);
+                    if (assignmentSubmitted) {
+                        const nextBtn = findNextItem();
+                        if (nextBtn) {
+                            toast('Assignment submitted! Moving to next item...');
+                            waitingForAssignment = false;
+                            assignmentSubmitted = false;
+                            autoEnabled = true;
+                            updateUi();
+                            nextBtn.click();
+                            doneUrls.add(location.href);
+                            navTimestamp = Date.now();
+                        }
                     }
                     return;
                 }
             } else {
                 if (waitingForAssignment) {
                     waitingForAssignment = false;
+                    assignmentSubmitted = false;
                     updateUi();
                 }
             }
@@ -525,6 +553,7 @@
             isRunning = false;
             if (waitingForAssignment && !isAssignmentPage()) {
                 waitingForAssignment = false;
+                assignmentSubmitted = false;
                 updateUi();
             }
         }
@@ -536,6 +565,7 @@
 
     function toggleAuto() {
         waitingForAssignment = false;
+        assignmentSubmitted = false;
         autoEnabled = !autoEnabled;
         localStorage.setItem('tm_auto', autoEnabled ? 'true' : 'false');
         updateUi();
