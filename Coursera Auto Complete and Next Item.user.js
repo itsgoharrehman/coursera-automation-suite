@@ -27,18 +27,28 @@
     let uiReady = false;
     let navTimestamp = 0;
     let waitingForAssignment = false;
-    let assignmentSubmitted = false;
+    let primarySubmitClicked = false;
+    let finalSubmitConfirmed = false;
 
-    // Track user clicking Submit on assignment/quiz (including modal confirm buttons)
+    // Track user clicking Submit on assignment/quiz (distinguish 1st submit vs 2nd modal submit)
     document.addEventListener('click', (e) => {
         const target = e.target;
         if (!target) return;
         const btn = target.closest('button, [role="button"], input[type="submit"]');
-        if (btn) {
-            const text = (btn.textContent || btn.value || '').toLowerCase();
+        if (!btn) return;
+
+        const insideModal = btn.closest('[role="dialog"], .rc-Modal, .cds-Modal-container, [data-test="modal"]') !== null;
+        const text = (btn.textContent || btn.value || '').toLowerCase();
+
+        if (insideModal) {
             if (text.includes('submit') || text.includes('confirm') || text.includes('yes')) {
-                assignmentSubmitted = true;
-                toast('Submit recorded. Waiting for next item...');
+                finalSubmitConfirmed = true;
+                toast('Final submit confirmed! Waiting for next item...');
+            }
+        } else {
+            if (text.includes('submit')) {
+                primarySubmitClicked = true;
+                toast('Submit clicked. Please confirm in popup modal...');
             }
         }
     }, true);
@@ -85,39 +95,30 @@
         return text.includes('submit') || text.includes('confirm') || text.includes('are you sure');
     }
 
-    function isRealSubmissionResults() {
-        if (isSubmissionModalOpen()) return false;
-
+    function isAlreadyCompletedAssignment() {
         const hasQuizInputs = document.querySelectorAll('input[type="radio"]:not([disabled]), input[type="checkbox"]:not([disabled]), textarea:not([disabled])').length > 0;
         const hasSubmitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']) !== null;
-        if (hasSubmitBtn || hasQuizInputs) return false;
+        const hasStartBtn = findBtnPartial(['start assignment', 'resume assignment', 'start quiz', 'attempt assignment']) !== null;
+
+        if (hasQuizInputs || hasSubmitBtn || hasStartBtn) return false;
 
         const hasGradeBadge = document.querySelector('[data-test="grade-badge"], [data-testid="grade-badge"], [data-test="pass-badge"], .rc-QuizResults, .rc-AssignmentFeedback') !== null;
-        const bodyText = (document.body ? document.body.textContent : '').toLowerCase();
-        const hasResultsText = bodyText.includes('passed') ||
-                               bodyText.includes('grade:') ||
-                               bodyText.includes('your score') ||
-                               bodyText.includes('view feedback') ||
-                               bodyText.includes('try again') ||
-                               bodyText.includes('congratulations');
-
-        return hasGradeBadge || hasResultsText || (assignmentSubmitted && !hasSubmitBtn && !hasQuizInputs);
+        return hasGradeBadge;
     }
 
     function isUnsubmittedAssignment() {
         if (!isAssignmentPage()) return false;
         if (isSubmissionModalOpen()) return true;
-        if (isRealSubmissionResults()) return false;
 
         const hasQuizInputs = document.querySelectorAll('input[type="radio"]:not([disabled]), input[type="checkbox"]:not([disabled]), textarea:not([disabled])').length > 0;
         const hasSubmitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']) !== null;
         const hasStartBtn = findBtnPartial(['start assignment', 'resume assignment', 'start quiz', 'attempt assignment', 'start']) !== null;
 
-        if (hasQuizInputs || hasSubmitBtn || hasStartBtn) {
-            return true;
+        if (hasQuizInputs || hasSubmitBtn || hasStartBtn || primarySubmitClicked) {
+            return !finalSubmitConfirmed;
         }
 
-        return !assignmentSubmitted;
+        return !finalSubmitConfirmed && !isAlreadyCompletedAssignment();
     }
 
     // =============================================
@@ -531,18 +532,19 @@
 
             // Check assignment page state
             if (isAssignmentPage()) {
-                // 1. If modal is currently open, stay paused and wait
+                // 1. If modal is currently open, stay paused and wait for user to click Submit in modal
                 if (isSubmissionModalOpen()) {
                     return;
                 }
 
-                // 2. If user submitted assignment in this session and modal closed
-                if (waitingForAssignment && assignmentSubmitted) {
+                // 2. If user confirmed final submit in modal and modal closed
+                if (waitingForAssignment && finalSubmitConfirmed) {
                     const nextBtn = findNextItem();
                     if (nextBtn) {
                         toast('Assignment submitted! Moving to next item...');
                         waitingForAssignment = false;
-                        assignmentSubmitted = false;
+                        primarySubmitClicked = false;
+                        finalSubmitConfirmed = false;
                         autoEnabled = true;
                         updateUi();
                         nextBtn.click();
@@ -554,7 +556,7 @@
                     return;
                 }
 
-                // 3. Unsubmitted assignment (user is working on assignment)
+                // 3. Unsubmitted assignment (user is working or 1st submit clicked)
                 if (isUnsubmittedAssignment()) {
                     if (autoEnabled && !waitingForAssignment) {
                         waitingForAssignment = true;
@@ -566,12 +568,13 @@
                 }
 
                 // 4. Completed assignment from previous session
-                if (waitingForAssignment) {
+                if (waitingForAssignment && isAlreadyCompletedAssignment()) {
                     const nextBtn = findNextItem();
                     if (nextBtn) {
                         toast('Moving to next item...');
                         waitingForAssignment = false;
-                        assignmentSubmitted = false;
+                        primarySubmitClicked = false;
+                        finalSubmitConfirmed = false;
                         autoEnabled = true;
                         updateUi();
                         nextBtn.click();
@@ -583,7 +586,8 @@
             } else {
                 if (waitingForAssignment) {
                     waitingForAssignment = false;
-                    assignmentSubmitted = false;
+                    primarySubmitClicked = false;
+                    finalSubmitConfirmed = false;
                     updateUi();
                 }
             }
@@ -615,7 +619,8 @@
             isRunning = false;
             if (waitingForAssignment && !isAssignmentPage()) {
                 waitingForAssignment = false;
-                assignmentSubmitted = false;
+                primarySubmitClicked = false;
+                finalSubmitConfirmed = false;
                 updateUi();
             }
         }
@@ -627,7 +632,8 @@
 
     function toggleAuto() {
         waitingForAssignment = false;
-        assignmentSubmitted = false;
+        primarySubmitClicked = false;
+        finalSubmitConfirmed = false;
         autoEnabled = !autoEnabled;
         localStorage.setItem('tm_auto', autoEnabled ? 'true' : 'false');
         updateUi();
