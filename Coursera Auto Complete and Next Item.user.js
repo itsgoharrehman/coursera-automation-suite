@@ -86,10 +86,22 @@
         return false;
     }
 
+    function isElementVisible(el) {
+        if (!el) return false;
+        if (el.offsetParent === null && window.getComputedStyle(el).position !== 'fixed') return false;
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+        return true;
+    }
+
     function isAnyModalOpen() {
-        for (const modal of document.querySelectorAll('[role="dialog"], [class*="Modal"], [class*="modal"], [class*="Overlay"], [class*="overlay"]')) {
-            if (modal.offsetParent !== null && modal.id !== 'tm-bar' && modal.id !== 'tm-t') {
-                const text = (modal.textContent || '').toLowerCase();
+        const modals = document.querySelectorAll('[role="dialog"], [class*="Modal"], [class*="modal"], [class*="Overlay"], [class*="overlay"]');
+        for (const m of modals) {
+            if (m.id === 'tm-bar' || m.id === 'tm-t') continue;
+            if (isElementVisible(m)) {
+                const text = (m.textContent || '').toLowerCase();
                 if (text.includes('submit') || text.includes('confirm') || text.includes('are you sure') || text.includes('cancel')) {
                     return true;
                 }
@@ -99,15 +111,11 @@
     }
 
     function isSubmissionFinished() {
-        // If modal popup is open, submission is NOT finished
+        // If modal popup is currently visible, NOT finished
         if (isAnyModalOpen()) return false;
 
         // If user hasn't clicked submit at least once, NOT finished
         if (!userIsSubmitting) return false;
-
-        // If primary submit button is still visible and enabled on page, NOT finished
-        const submitBtn = findBtnPartial(['submit assignment', 'submit quiz']);
-        if (submitBtn && !submitBtn.disabled) return false;
 
         // User clicked submit and modal is closed -> finished!
         return true;
@@ -122,21 +130,6 @@
 
         const hasGradeBadge = document.querySelector('[data-test="grade-badge"], [data-testid="grade-badge"], [data-test="pass-badge"], .rc-QuizResults, .rc-AssignmentFeedback') !== null;
         return hasGradeBadge;
-    }
-
-    function isUnsubmittedAssignment() {
-        if (!isAssignmentPage()) return false;
-        if (isSubmissionModalOpen()) return true;
-
-        const hasQuizInputs = document.querySelectorAll('input[type="radio"]:not([disabled]), input[type="checkbox"]:not([disabled]), textarea:not([disabled])').length > 0;
-        const hasSubmitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']) !== null;
-        const hasStartBtn = findBtnPartial(['start assignment', 'resume assignment', 'start quiz', 'attempt assignment', 'start']) !== null;
-
-        if (hasQuizInputs || hasSubmitBtn || hasStartBtn || primarySubmitClicked) {
-            return !finalSubmitConfirmed;
-        }
-
-        return !finalSubmitConfirmed && !isAlreadyCompletedAssignment();
     }
 
     // =============================================
@@ -560,19 +553,13 @@
 
             // Check assignment page state
             if (isAssignmentPage()) {
-                // 1. If submission is not finished & not already completed: strictly pause and return
-                if (!isSubmissionFinished() && !isAlreadyCompletedAssignment()) {
-                    if (autoEnabled || !waitingForAssignment) {
-                        waitingForAssignment = true;
-                        autoEnabled = false;
-                        updateUi();
-                        toast('Assignment page — Auto paused.');
-                    }
-                    return; // STRICTLY PAUSE
+                // 1. If modal popup is currently visible, stay paused and wait
+                if (isAnyModalOpen()) {
+                    return;
                 }
 
-                // 2. If submission IS finished (user clicked submit & modal closed) or already completed:
-                if (waitingForAssignment && (isSubmissionFinished() || isAlreadyCompletedAssignment())) {
+                // 2. If user clicked submit and modal is closed (or already completed assignment)
+                if (waitingForAssignment && (userIsSubmitting || isAlreadyCompletedAssignment())) {
                     const nextBtn = findNextItem();
                     if (nextBtn) {
                         toast('Assignment completed! Moving to next item...');
@@ -586,8 +573,17 @@
                         navTimestamp = Date.now();
                         return;
                     }
-                    return; // Wait for next button to finish loading on screen
+                    return; // Next button is loading on screen, keep polling
                 }
+
+                // 3. User is working on assignment before submitting: strictly pause
+                if (autoEnabled || !waitingForAssignment) {
+                    waitingForAssignment = true;
+                    autoEnabled = false;
+                    updateUi();
+                    toast('Assignment page — Auto paused.');
+                }
+                return;
             } else {
                 if (waitingForAssignment) {
                     waitingForAssignment = false;
