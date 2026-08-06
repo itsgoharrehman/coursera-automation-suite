@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      6.0
 // @description  Complete Coursera autopilot. Handles ALL activity types: videos, readings, labs, discussions, quizzes, peer reviews, and more.
-// @author       Antigravity
+// @author       Gohar Rehman
 // @match        *://*.coursera.org/*
 // @grant        none
 // ==/UserScript==
@@ -29,8 +29,9 @@
     let waitingForAssignment = false;
     let submitClickCount = 0;
     let userIsSubmitting = false;
+    let runStartTime = 0;
 
-    // Track user clicking Submit / Confirm on assignment or modal
+    // Track user clicking Submit / Confirm on assignment modal dialog
     document.addEventListener('click', (e) => {
         const target = e.target;
         if (!target) return;
@@ -38,10 +39,12 @@
         if (!btn) return;
 
         const text = (btn.textContent || btn.value || '').toLowerCase();
-        if (text.includes('submit') || text.includes('confirm') || text.includes('yes')) {
-            submitClickCount++;
+        const inModal = btn.closest('[role="dialog"], [class*="Modal"], [class*="modal"], [class*="Overlay"], [class*="overlay"]') !== null;
+        
+        // Only set userIsSubmitting when 2nd Submit is clicked inside the modal confirmation dialog
+        if (inModal && (text.includes('submit') || text.includes('confirm') || text.includes('yes'))) {
             userIsSubmitting = true;
-            toast('Submit clicked (' + submitClickCount + '). Waiting for results...');
+            toast('Final Submit clicked in modal. Waiting for grade results...');
         }
     }, true);
 
@@ -73,16 +76,7 @@
         const type = getPageType();
         if (['quiz', 'assignment', 'peer', 'programming'].includes(type)) return true;
         const path = location.pathname.toLowerCase();
-        if (path.includes('/graded')) return true;
-
-        const hasQuizForm = document.querySelectorAll('input[type="radio"], input[type="checkbox"], textarea').length > 0;
-        const hasSubmitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']) !== null;
-        const hasStartBtn = findBtnPartial(['start assignment', 'resume assignment', 'start quiz', 'attempt assignment']) !== null;
-        if (hasQuizForm || hasSubmitBtn || hasStartBtn) return true;
-
-        const h1 = document.querySelector('h1, h2');
-        const headerText = h1 ? h1.textContent.toLowerCase() : '';
-        if (headerText.includes('assignment') || headerText.includes('graded quiz') || headerText.includes('quiz')) return true;
+        if (path.includes('/graded') || path.includes('/quiz') || path.includes('/exam') || path.includes('/assignment')) return true;
         return false;
     }
 
@@ -127,15 +121,53 @@
         return false;
     }
 
+    function getAssignmentGradeText() {
+        const selectors = [
+            '[data-test="grade-badge"]', '[data-testid="grade-badge"]',
+            '[data-test="pass-badge"]', '[data-testid="pass-badge"]',
+            '.rc-QuizResults', '.rc-AssignmentFeedback', '[class*="GradeHeader"]', '[class*="gradeHeader"]'
+        ];
+        for (let i = 0; i < selectors.length; i++) {
+            const el = document.querySelector(selectors[i]);
+            if (el && isElementVisible(el)) {
+                const text = (el.textContent || '').trim();
+                if (text) return text;
+            }
+        }
+        const main = document.querySelector('main, [role="main"]') || document.body;
+        const mainText = main ? main.textContent : '';
+        const gradeMatch = mainText.match(/(?:your grade|latest grade|final grade)[:\s]+([\d]+%|\d+\/\d+)/i);
+        if (gradeMatch) return gradeMatch[0];
+        return null;
+    }
+
+    function hasUnsubmittedQuizForm() {
+        if (isAnyModalOpen()) return true;
+        const activeInputs = document.querySelectorAll('input[type="radio"]:not([disabled]), input[type="checkbox"]:not([disabled]), textarea:not([disabled])');
+        if (activeInputs.length > 0) return true;
+
+        const submitBtn = findBtnPartial(['submit assignment', 'submit quiz']);
+        if (submitBtn && !submitBtn.disabled && submitBtn.offsetParent !== null) {
+            return true;
+        }
+
+        return false;
+    }
+
+    function isGradedResultsScreen() {
+        if (isAnyModalOpen()) return false;
+        if (!isAssignmentPage()) return false;
+        
+        // Grade header or badge present in main assignment area
+        const grade = getAssignmentGradeText();
+        if (grade) return true;
+
+        return false;
+    }
+
     function isAlreadyCompletedAssignment() {
-        const hasQuizInputs = document.querySelectorAll('input[type="radio"]:not([disabled]), input[type="checkbox"]:not([disabled]), textarea:not([disabled])').length > 0;
-        const hasSubmitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']) !== null;
-        const hasStartBtn = findBtnPartial(['start assignment', 'resume assignment', 'start quiz', 'attempt assignment']) !== null;
-
-        if (hasQuizInputs || hasSubmitBtn || hasStartBtn) return false;
-
-        const hasGradeBadge = document.querySelector('[data-test="grade-badge"], [data-testid="grade-badge"], [data-test="pass-badge"], .rc-QuizResults, .rc-AssignmentFeedback') !== null;
-        return hasGradeBadge;
+        if (hasUnsubmittedQuizForm()) return false;
+        return isGradedResultsScreen();
     }
 
     // =============================================
@@ -165,9 +197,19 @@
     function videoEnded(video) {
         return new Promise(resolve => {
             if (!video || video.ended) { resolve(); return; }
-            if (video.currentTime >= video.duration - 0.5) { resolve(); return; }
-            video.addEventListener('ended', resolve, { once: true });
-            setTimeout(resolve, 30000);
+            if (video.currentTime >= video.duration - 0.2) { resolve(); return; }
+            
+            const check = setInterval(() => {
+                if (!video || video.ended || video.currentTime >= video.duration - 0.2) {
+                    clearInterval(check);
+                    resolve();
+                }
+            }, 300);
+
+            setTimeout(() => {
+                clearInterval(check);
+                resolve();
+            }, 10000);
         });
     }
 
@@ -256,20 +298,43 @@
     }
 
     function findNextItem() {
-        return findBtn(
+        const primary = findBtn(
             ['go to next item', 'next item', 'go to next', 'continue', 'next'],
             ['Go to next item', 'Go To Next Item', 'Next Item', 'Next', 'Go to next'],
-            ['[data-test="next-item-button"]', '[data-testid="next-button"]']
+            ['[data-test="next-item-button"]', '[data-testid="next-button"]', 'button[aria-label*="Next"]', 'button[aria-label*="next"]', 'a[aria-label*="Next"]']
         );
+        if (primary) return primary;
+
+        // Fallback partial text search
+        for (const el of document.querySelectorAll('button, [role="button"], a.cds-button')) {
+            if (el.disabled || el.offsetParent === null) continue;
+            if (el.closest('#tm-bar, #tm-widget, #tm-t')) continue;
+            const t = (el.textContent || '').trim().toLowerCase();
+            if (t.includes('next item') || t.includes('go to next') || t === 'next' || t.includes('continue')) {
+                return el;
+            }
+        }
+        return null;
     }
 
     // --- Assignment ---
     function findAssignmentStart() {
-        return findBtn(
+        const primary = findBtn(
             ['start assignment', 'resume assignment', 'start quiz', 'attempt assignment', 'start', 'resume', 'begin assignment', 'open assignment'],
             ['Start assignment', 'Resume assignment', 'Start quiz', 'Attempt assignment', 'Start Assignment', 'Resume Assignment', 'Start', 'Resume'],
             ['[data-test="start-assignment-button"]', '[data-testid="start-assignment"]', 'button[aria-label*="assignment"]', 'button[aria-label*="Assignment"]']
         );
+        if (primary) return primary;
+
+        for (const el of document.querySelectorAll('button, [role="button"], a')) {
+            if (el.disabled || el.offsetParent === null) continue;
+            if (el.closest('#tm-bar, #tm-widget, #tm-t')) continue;
+            const t = (el.textContent || el.value || '').trim().toLowerCase();
+            if (t === 'start assignment' || t === 'start quiz' || t === 'resume assignment' || t === 'attempt assignment' || t.includes('start assignment') || t.includes('start quiz')) {
+                return el;
+            }
+        }
+        return null;
     }
 
     // --- Lab ---
@@ -439,28 +504,47 @@
     }
 
     async function handleDialogue() {
+        toast('Handling dialogue...');
+
         // 1. Click start dialogue / conversation / discussion
         const start = findDialogueStart() || findDiscussionStart();
         if (start) {
             start.click();
             toast('Dialogue started');
-            await sleep(1500);
+            await sleep(2500);
         }
 
-        // 2. Click end dialogue / discussion
-        let end = await waitForBtn(() => findDialogueEnd() || findDiscussionEnd(), 5000);
+        // 2. Click end dialogue / conversation (wait up to 10s for dialogue initialization)
+        let end = await waitForBtn(() => findDialogueEnd() || findDiscussionEnd() || findBtnPartial([
+            'end dialogue', 'end conversation', 'finish dialogue', 'finish conversation', 'complete dialogue', 'close dialogue', 'exit dialogue', 'stop dialogue'
+        ]), 10000);
+
         if (end) {
             end.click();
             toast('Ending dialogue...');
-            await sleep(1000);
+            await sleep(1500);
 
-            // 3. Click "Yes, end dialogue" / confirmation modal
-            const confirm = await waitForBtn(() => findDialogueConfirm() || findConfirmBtn(), 3000);
+            // 3. Click "Yes, end dialogue" / confirmation modal button
+            const confirm = await waitForBtn(() => {
+                const modal = document.querySelector('[role="dialog"], [class*="Modal"], [class*="modal"]');
+                if (modal) {
+                    for (const btn of modal.querySelectorAll('button, [role="button"]')) {
+                        const t = (btn.textContent || '').trim().toLowerCase();
+                        if (t.includes('end') || t.includes('confirm') || t.includes('yes') || t.includes('finish')) {
+                            return btn;
+                        }
+                    }
+                }
+                return findDialogueConfirm() || findConfirmBtn();
+            }, 5000);
+
             if (confirm) {
                 confirm.click();
                 toast('Confirmed end dialogue');
-                await sleep(800);
+                await sleep(1500);
             }
+        } else {
+            toast('Dialogue in progress...');
         }
     }
 
@@ -477,18 +561,13 @@
             if (elapsed < AFTER_NAV_WAIT) return;
         }
 
-        // Strict Guard: On unsubmitted assignment page, do NOT execute doIt in auto mode
-        if (isAuto && (isAssignmentPage() || hasActiveSubmitOrStart())) {
-            if (isAnyModalOpen() || hasActiveSubmitOrStart()) {
-                waitingForAssignment = true;
-                autoEnabled = false;
-                updateUi();
-                toast('Assignment page — Auto paused.');
-                return;
-            }
+        // Strict Guard: On assignment page, do NOT execute doIt in auto mode
+        if (isAuto && isAssignmentPage()) {
+            return;
         }
 
         isRunning = true;
+        runStartTime = Date.now();
         const url = location.href;
         const pageType = getPageType();
 
@@ -511,16 +590,11 @@
             }
 
             // --- Universal: Mark Complete ---
-            if (isAuto && (isAssignmentPage() || hasActiveSubmitOrStart()) && (isAnyModalOpen() || hasActiveSubmitOrStart())) {
-                return;
-            }
+            if (isAuto && (waitingForAssignment || userIsSubmitting)) return;
 
             let mark = await waitForBtn(findMarkComplete, 2000);
 
-            // Safety re-check after await
-            if (isAuto && (isAssignmentPage() || hasActiveSubmitOrStart()) && (isAnyModalOpen() || hasActiveSubmitOrStart())) {
-                return;
-            }
+            if (isAuto && (waitingForAssignment || userIsSubmitting)) return;
 
             if (mark) {
                 mark.click();
@@ -529,9 +603,7 @@
             }
 
             // --- Universal: Go to Next Item ---
-            if (isAuto && (isAssignmentPage() || hasActiveSubmitOrStart()) && (isAnyModalOpen() || hasActiveSubmitOrStart())) {
-                return;
-            }
+            if (isAuto && (waitingForAssignment || userIsSubmitting)) return;
 
             const next = findNextItem();
             if (next) {
@@ -557,43 +629,67 @@
     function startScan() {
         stopScan();
         scanTimer = setInterval(() => {
-            if (isRunning) return;
+            if (isRunning) {
+                if (Date.now() - runStartTime > 15000) {
+                    isRunning = false;
+                } else {
+                    return;
+                }
+            }
             if (doneUrls.has(location.href)) return;
             if (Date.now() - navTimestamp < AFTER_NAV_WAIT) return;
 
-            const onAssignment = isAssignmentPage() || hasActiveSubmitOrStart();
+            const onAssignment = isAssignmentPage();
 
-            // Check assignment page state
             if (onAssignment) {
-                // 1. If modal popup is open OR active submit/start button exists: stay strictly paused
-                if (isAnyModalOpen() || hasActiveSubmitOrStart()) {
-                    if (autoEnabled || !waitingForAssignment) {
-                        waitingForAssignment = true;
-                        autoEnabled = false;
-                        updateUi();
-                        toast('Assignment page — Auto paused.');
-                    }
-                    return; // STRICT PAUSE
-                }
+                const nextBtn = findNextItem();
+                const isGraded = isGradedResultsScreen();
+                const startBtn = findAssignmentStart();
+                const hasQuizInputs = hasUnsubmittedQuizForm();
 
-                // 2. Modal closed AND no active submit/start button -> Assignment finished!
-                if (waitingForAssignment || !autoEnabled) {
-                    const nextBtn = findNextItem();
+                // 1. Graded Results Screen OR 2nd Submit Modal Clicked AND modal closed
+                if (isGraded || (userIsSubmitting && !isAnyModalOpen() && !hasQuizInputs)) {
                     if (nextBtn) {
-                        toast('Assignment completed! Moving to next item...');
+                        toast('Grade confirmed — Moving to next item...');
                         doneUrls.add(location.href);
                         navTimestamp = Date.now();
                         waitingForAssignment = false;
-                        autoEnabled = true;
+                        userIsSubmitting = false;
+                        submitClickCount = 0;
+                        if (localStorage.getItem('tm_auto') === 'true') {
+                            autoEnabled = true;
+                        }
                         updateUi();
                         nextBtn.click();
                         return;
                     }
-                    return; // Next button is loading on screen, keep polling
+                }
+
+                // 2. Assignment Intro/Landing Page with "Start assignment" button → Immediately auto-click Start!
+                if (startBtn && !hasQuizInputs && !userIsSubmitting && !isGraded) {
+                    toast('Starting assignment...');
+                    startBtn.click();
+                    return;
+                }
+
+                // 3. Active Quiz Form (Answering Questions) → Pause & Wait for Grade
+                if (hasQuizInputs && !isGraded) {
+                    if (!waitingForAssignment || autoEnabled) {
+                        waitingForAssignment = true;
+                        autoEnabled = false;
+                        updateUi();
+                        toast('Assignment page — Auto paused for completion.');
+                    }
+                    return; // DO NOT CLICK NEXT UNTIL GRADED
                 }
             } else {
-                if (waitingForAssignment) {
+                if (waitingForAssignment || userIsSubmitting) {
                     waitingForAssignment = false;
+                    userIsSubmitting = false;
+                    submitClickCount = 0;
+                    if (localStorage.getItem('tm_auto') === 'true') {
+                        autoEnabled = true;
+                    }
                     updateUi();
                 }
             }
@@ -621,14 +717,20 @@
             lastUrl = location.href;
             navTimestamp = Date.now();
             isRunning = false;
-            if (waitingForAssignment && !isAssignmentPage()) {
-                waitingForAssignment = false;
-                userIsSubmitting = false;
-                submitClickCount = 0;
-                updateUi();
+            waitingForAssignment = false;
+            userIsSubmitting = false;
+            submitClickCount = 0;
+
+            // Allow rescanning when navigating back to previous items
+            doneUrls.delete(location.href);
+
+            // Sync autoEnabled with user preference in localStorage
+            if (localStorage.getItem('tm_auto') === 'true') {
+                autoEnabled = true;
             }
+            updateUi();
         }
-    }, 800);
+    }, 500);
 
     // =============================================
     // TOGGLE
@@ -641,7 +743,7 @@
         autoEnabled = !autoEnabled;
         localStorage.setItem('tm_auto', autoEnabled ? 'true' : 'false');
         updateUi();
-        toast(autoEnabled ? 'Auto: ON' : 'Auto: OFF');
+        toast(autoEnabled ? 'Auto Skip: ON' : 'Auto Skip: OFF');
         if (autoEnabled) {
             navTimestamp = Date.now();
             isRunning = false;
@@ -656,6 +758,25 @@
     // UI — Two buttons, draggable, green toast
     // =============================================
 
+    // Inject CSS keyframes for pulsing status dot
+    if (!document.getElementById('tm-styles')) {
+        const st = document.createElement('style');
+        st.id = 'tm-styles';
+        st.textContent = `
+            @keyframes tmPulse {
+                0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+                70% { transform: scale(1.05); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+                100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+            }
+            @keyframes tmPausePulse {
+                0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+                70% { transform: scale(1.05); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+                100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+            }
+        `;
+        (document.head || document.documentElement).appendChild(st);
+    }
+
     function toast(msg) {
         let t = document.getElementById('tm-t');
         if (!t) {
@@ -663,163 +784,163 @@
             t.id = 'tm-t';
             Object.assign(t.style, {
                 all: 'unset', boxSizing: 'border-box',
-                position: 'fixed', bottom: '60px', right: '16px',
-                background: '#052e16', color: '#4ade80',
-                padding: '8px 16px', borderRadius: '6px',
-                fontFamily: 'system-ui, sans-serif', fontSize: '13px', fontWeight: '600',
+                position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)',
+                background: '#0f172a', color: '#f8fafc',
+                padding: '6px 18px', borderRadius: '8px',
+                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                fontSize: '12px', fontWeight: '600', letterSpacing: '0.2px',
                 zIndex: '9999999', pointerEvents: 'none',
-                transition: 'opacity .15s', opacity: '0',
-                border: '1px solid #16a34a', maxWidth: '320px', whiteSpace: 'nowrap'
+                transition: 'opacity .2s ease',
+                opacity: '0', border: '1px solid rgba(255, 255, 255, 0.15)',
+                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+                maxWidth: '480px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden'
             });
             document.body.appendChild(t);
         }
         t.textContent = msg;
         t.style.opacity = '1';
         clearTimeout(t._x);
-        t._x = setTimeout(() => t.style.opacity = '0', 1400);
+        t._x = setTimeout(() => {
+            t.style.opacity = '0';
+        }, 2200);
     }
 
     function createUi() {
-        if (uiReady && document.getElementById('tm-bar')) return;
-        const old = document.getElementById('tm-bar');
+        if (uiReady && document.getElementById('tm-widget')) return;
+        const old = document.getElementById('tm-widget') || document.getElementById('tm-bar');
         if (old) old.remove();
 
-        const bar = document.createElement('div');
-        bar.id = 'tm-bar';
-        Object.assign(bar.style, {
+        const widget = document.createElement('div');
+        widget.id = 'tm-widget';
+        Object.assign(widget.style, {
             all: 'unset', boxSizing: 'border-box',
             position: 'fixed', zIndex: '999998',
-            display: 'flex', gap: '4px', alignItems: 'center',
-            fontFamily: 'system-ui, sans-serif',
-            background: '#111', padding: '4px 6px',
-            borderRadius: '8px', border: '1px solid #2a2a2a',
-            boxShadow: '0 2px 12px rgba(0,0,0,.4)',
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            background: '#1e293b',
+            padding: '4px 6px',
+            borderRadius: '6px',
+            border: '1px solid #334155',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
             userSelect: 'none', cursor: 'grab'
         });
 
-        // Restore saved position or default to bottom-center
-        const saved = localStorage.getItem('tm_bar_pos');
+        const saved = localStorage.getItem('tm_widget_pos') || localStorage.getItem('tm_bar_pos');
         if (saved) {
             try {
                 const pos = JSON.parse(saved);
-                bar.style.left = pos.x + 'px';
-                bar.style.top = pos.y + 'px';
+                widget.style.left = pos.x + 'px';
+                widget.style.top = pos.y + 'px';
             } catch (_) {
-                bar.style.bottom = '16px';
-                bar.style.left = '50%';
-                bar.style.transform = 'translateX(-50%)';
+                widget.style.bottom = '20px';
+                widget.style.right = '20px';
             }
         } else {
-            bar.style.bottom = '16px';
-            bar.style.left = '50%';
-            bar.style.transform = 'translateX(-50%)';
+            widget.style.bottom = '20px';
+            widget.style.right = '20px';
         }
 
-        // Drag logic
         let isDragging = false;
-        let dragStartX, dragStartY, barStartX, barStartY;
+        let dragStartX, dragStartY, wX, wY;
 
-        bar.addEventListener('mousedown', (e) => {
-            if (e.target.tagName === 'BUTTON') return;
+        widget.addEventListener('mousedown', (e) => {
+            if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
             isDragging = true;
-            bar.style.cursor = 'grabbing';
-            dragStartX = e.clientX;
-            dragStartY = e.clientY;
-            const rect = bar.getBoundingClientRect();
-            barStartX = rect.left;
-            barStartY = rect.top;
-            bar.style.bottom = '';
-            bar.style.right = '';
-            bar.style.transform = '';
+            widget.style.cursor = 'grabbing';
+            dragStartX = e.clientX; dragStartY = e.clientY;
+            const r = widget.getBoundingClientRect();
+            wX = r.left; wY = r.top;
+            widget.style.bottom = ''; widget.style.right = '';
             e.preventDefault();
         });
-
         document.addEventListener('mousemove', (e) => {
             if (!isDragging) return;
-            const dx = e.clientX - dragStartX;
-            const dy = e.clientY - dragStartY;
-            let newX = barStartX + dx;
-            let newY = barStartY + dy;
-            const rect = bar.getBoundingClientRect();
-            newX = Math.max(0, Math.min(newX, window.innerWidth - rect.width));
-            newY = Math.max(0, Math.min(newY, window.innerHeight - rect.height));
-            bar.style.left = newX + 'px';
-            bar.style.top = newY + 'px';
+            let nx = wX + (e.clientX - dragStartX);
+            let ny = wY + (e.clientY - dragStartY);
+            const r = widget.getBoundingClientRect();
+            nx = Math.max(4, Math.min(nx, innerWidth - r.width - 4));
+            ny = Math.max(4, Math.min(ny, innerHeight - r.height - 4));
+            widget.style.left = nx + 'px'; widget.style.top = ny + 'px';
         });
-
         document.addEventListener('mouseup', () => {
             if (!isDragging) return;
-            isDragging = false;
-            bar.style.cursor = 'grab';
-            const rect = bar.getBoundingClientRect();
-            localStorage.setItem('tm_bar_pos', JSON.stringify({ x: rect.left, y: rect.top }));
+            isDragging = false; widget.style.cursor = 'grab';
+            const r = widget.getBoundingClientRect();
+            localStorage.setItem('tm_widget_pos', JSON.stringify({ x: r.left, y: r.top }));
         });
 
-        // Button 1: Skip & Next (manual)
+        // Button 1: Skip & Next (Rectangle text)
         const doBtn = document.createElement('button');
         doBtn.id = 'tm-do';
         doBtn.textContent = 'Skip & Next';
-        doBtn.title = 'Run the full process once [Alt+D]';
+        doBtn.title = 'Run single skip & next item [Alt+D]';
         Object.assign(doBtn.style, {
             all: 'unset', boxSizing: 'border-box',
-            background: '#1a1a1a', color: '#ccc',
-            border: '1px solid #2a2a2a', borderRadius: '5px',
-            padding: '4px 10px', fontWeight: '600', fontSize: '10px',
+            background: '#334155', color: '#f8fafc',
+            border: '1px solid #475569', borderRadius: '4px',
+            padding: '5px 10px', fontSize: '11px', fontWeight: '600',
             lineHeight: '1', cursor: 'pointer',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'background .1s', whiteSpace: 'nowrap'
+            whiteSpace: 'nowrap'
         });
-        doBtn.onmouseenter = () => doBtn.style.background = '#2a2a2a';
-        doBtn.onmouseleave = () => doBtn.style.background = '#1a1a1a';
+        doBtn.onmouseenter = () => doBtn.style.background = '#475569';
+        doBtn.onmouseleave = () => doBtn.style.background = '#334155';
         doBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); doIt(false); };
 
-        // Button 2: Auto Skip (toggle)
+        // Button 2: Auto Skip (Rectangle text)
         const autoBtn = document.createElement('button');
         autoBtn.id = 'tm-auto';
-        autoBtn.title = 'Toggle autopilot [Alt+A]';
+        autoBtn.title = 'Toggle continuous autopilot [Alt+A]';
         Object.assign(autoBtn.style, {
             all: 'unset', boxSizing: 'border-box',
-            borderRadius: '5px',
-            padding: '4px 10px', fontWeight: '600', fontSize: '10px',
+            borderRadius: '4px',
+            padding: '5px 10px', fontSize: '11px', fontWeight: '600',
             lineHeight: '1', cursor: 'pointer',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'background .1s, color .1s, border-color .1s',
             whiteSpace: 'nowrap'
         });
         autoBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleAuto(); };
 
-        bar.appendChild(doBtn);
-        bar.appendChild(autoBtn);
-        document.body.appendChild(bar);
+        widget.appendChild(doBtn);
+        widget.appendChild(autoBtn);
+        document.body.appendChild(widget);
+
         uiReady = true;
         updateUi();
     }
 
     function updateUi() {
-        const b = document.getElementById('tm-auto');
-        if (!b) return;
+        const autoBtn = document.getElementById('tm-auto');
+        if (!autoBtn) return;
+
         if (waitingForAssignment) {
-            b.textContent = 'Auto: Paused (Assignment)';
-            Object.assign(b.style, { background: '#2e1005', color: '#fb923c', borderColor: '#c2410c', border: '1px solid #c2410c' });
-            b.onmouseenter = () => b.style.background = '#431407';
-            b.onmouseleave = () => Object.assign(b.style, { background: '#2e1005' });
+            autoBtn.textContent = 'Auto: Paused (Assignment)';
+            Object.assign(autoBtn.style, {
+                background: '#451a03', color: '#fb923c', border: '1px solid #9a3412'
+            });
+            autoBtn.onmouseenter = () => autoBtn.style.background = '#7c2d12';
+            autoBtn.onmouseleave = () => autoBtn.style.background = '#451a03';
         } else if (autoEnabled) {
-            b.textContent = 'Auto Skip: ON';
-            Object.assign(b.style, { background: '#0a1a0a', color: '#4ade80', borderColor: '#16a34a', border: '1px solid #16a34a' });
-            b.onmouseenter = () => b.style.background = '#0f2a0f';
-            b.onmouseleave = () => Object.assign(b.style, { background: '#0a1a0a' });
+            autoBtn.textContent = 'Auto Skip: ON';
+            Object.assign(autoBtn.style, {
+                background: '#064e3b', color: '#34d399', border: '1px solid #059669'
+            });
+            autoBtn.onmouseenter = () => autoBtn.style.background = '#047857';
+            autoBtn.onmouseleave = () => autoBtn.style.background = '#064e3b';
         } else {
-            b.textContent = 'Auto Skip: OFF';
-            Object.assign(b.style, { background: '#1a1a1a', color: '#666', borderColor: '#2a2a2a', border: '1px solid #2a2a2a' });
-            b.onmouseenter = () => b.style.background = '#2a2a2a';
-            b.onmouseleave = () => Object.assign(b.style, { background: '#1a1a1a' });
+            autoBtn.textContent = 'Auto Skip: OFF';
+            Object.assign(autoBtn.style, {
+                background: '#334155', color: '#94a3b8', border: '1px solid #475569'
+            });
+            autoBtn.onmouseenter = () => autoBtn.style.background = '#475569';
+            autoBtn.onmouseleave = () => autoBtn.style.background = '#334155';
         }
     }
 
     let uiTmr = null;
     function ensureUi() {
         if (uiTmr) return;
-        uiTmr = setTimeout(() => { uiTmr = null; if (!document.getElementById('tm-bar')) { uiReady = false; createUi(); } }, 500);
+        uiTmr = setTimeout(() => { uiTmr = null; if (!document.getElementById('tm-widget')) { uiReady = false; createUi(); } }, 500);
     }
 
     // =============================================
