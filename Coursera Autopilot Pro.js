@@ -40,7 +40,7 @@
 
         const text = (btn.textContent || btn.value || '').toLowerCase();
         const inModal = btn.closest('[role="dialog"], [class*="Modal"], [class*="modal"], [class*="Overlay"], [class*="overlay"]') !== null;
-        
+
         // Only set userIsSubmitting when 2nd Submit is clicked inside the modal confirmation dialog
         if (inModal && (text.includes('submit') || text.includes('confirm') || text.includes('yes'))) {
             userIsSubmitting = true;
@@ -55,20 +55,20 @@
 
     function getPageType() {
         const path = location.pathname.toLowerCase();
-        if (path.includes('/lecture'))           return 'video';
-        if (path.includes('/supplement'))        return 'reading';
-        if (path.includes('/quiz'))              return 'quiz';
-        if (path.includes('/exam'))              return 'quiz';
-        if (path.includes('/assignment'))        return 'assignment';
-        if (path.includes('/ungradedlab'))       return 'lab';
-        if (path.includes('/ungradedwidget'))    return 'lab';
-        if (path.includes('/gradedlti'))         return 'lab';
-        if (path.includes('/ungradedlti'))       return 'lab';
-        if (path.includes('/discussionprompt'))  return 'discussion';
-        if (path.includes('/dialogue'))          return 'dialogue';
-        if (path.includes('/peer'))              return 'peer';
-        if (path.includes('/programming'))       return 'programming';
-        if (path.includes('/item'))              return 'generic';
+        if (path.includes('/lecture')) return 'video';
+        if (path.includes('/supplement')) return 'reading';
+        if (path.includes('/quiz')) return 'quiz';
+        if (path.includes('/exam')) return 'quiz';
+        if (path.includes('/assignment')) return 'assignment';
+        if (path.includes('/ungradedlab')) return 'lab';
+        if (path.includes('/ungradedwidget')) return 'lab';
+        if (path.includes('/gradedlti')) return 'lab';
+        if (path.includes('/ungradedlti')) return 'lab';
+        if (path.includes('/discussionprompt')) return 'discussion';
+        if (path.includes('/dialogue')) return 'dialogue';
+        if (path.includes('/peer')) return 'peer';
+        if (path.includes('/programming')) return 'programming';
+        if (path.includes('/item')) return 'generic';
         return 'unknown';
     }
 
@@ -113,7 +113,7 @@
             if (m.id === 'tm-bar' || m.id === 'tm-t') continue;
             if (isElementVisible(m)) {
                 const text = (m.textContent || '').toLowerCase();
-                if ((text.includes('submit') || text.includes('confirm') || text.includes('are you sure') || text.includes('cancel')) && m.querySelector('button, [role="button"]')) {
+                if (text.includes('submit') || text.includes('confirm') || text.includes('are you sure') || text.includes('cancel')) {
                     return true;
                 }
             }
@@ -125,19 +125,18 @@
         const selectors = [
             '[data-test="grade-badge"]', '[data-testid="grade-badge"]',
             '[data-test="pass-badge"]', '[data-testid="pass-badge"]',
-            '.rc-QuizResults', '.rc-AssignmentFeedback', '[class*="GradeHeader"]', '[class*="gradeHeader"]',
-            '[class*="Grade"]', '[class*="grade"]', '[class*="Score"]', '[class*="score"]', '[class*="Result"]', '[class*="result"]'
+            '.rc-QuizResults', '.rc-AssignmentFeedback', '[class*="GradeHeader"]', '[class*="gradeHeader"]'
         ];
         for (let i = 0; i < selectors.length; i++) {
             const el = document.querySelector(selectors[i]);
             if (el && isElementVisible(el)) {
                 const text = (el.textContent || '').trim();
-                if (text && (text.includes('%') || /\d+\/\d+/.test(text) || /grade|passed|score|result/i.test(text))) return text;
+                if (text) return text;
             }
         }
         const main = document.querySelector('main, [role="main"]') || document.body;
         const mainText = main ? main.textContent : '';
-        const gradeMatch = mainText.match(/(?:your grade|latest grade|final grade|grade|score|passed)[:\s]+([\d]+%|\d+\/\d+)/i) || mainText.match(/\b\d{1,3}%\b/);
+        const gradeMatch = mainText.match(/(?:your grade|latest grade|final grade)[:\s]+([\d]+%|\d+\/\d+)/i);
         if (gradeMatch) return gradeMatch[0];
         return null;
     }
@@ -158,14 +157,10 @@
     function isGradedResultsScreen() {
         if (isAnyModalOpen()) return false;
         if (!isAssignmentPage()) return false;
-        
+
         // Grade header or badge present in main assignment area
         const grade = getAssignmentGradeText();
         if (grade) return true;
-
-        // If no active quiz inputs remain and Next Item exists on an assignment page, treat as graded
-        const hasQuizInputs = hasUnsubmittedQuizForm();
-        if (!hasQuizInputs && findNextItem()) return true;
 
         return false;
     }
@@ -195,7 +190,7 @@
         const t = Math.max(0, video.duration - SECONDS_FROM_END);
         if (video.currentTime >= t - 0.5) return false;
         video.currentTime = t;
-        if (video.paused) video.play().catch(() => {});
+        if (video.paused) video.play().catch(() => { });
         return true;
     }
 
@@ -203,7 +198,7 @@
         return new Promise(resolve => {
             if (!video || video.ended) { resolve(); return; }
             if (video.currentTime >= video.duration - 0.2) { resolve(); return; }
-            
+
             const check = setInterval(() => {
                 if (!video || video.ended || video.currentTime >= video.duration - 0.2) {
                     clearInterval(check);
@@ -359,9 +354,9 @@
     function findSideBySide() {
         return findBtn(
             ['learn side-by-side', 'learn side by side', 'launch side by side', 'open side by side', 'side by side',
-             'side-by-side learning', 'launch in split view', 'open in split view'],
+                'side-by-side learning', 'launch in split view', 'open in split view'],
             ['Learn side-by-side', 'Learn side by side', 'Launch side by side', 'Open side by side',
-             'Side by side', 'Launch in split view', 'Open in split view'],
+                'Side by side', 'Launch in split view', 'Open in split view'],
             ['[data-test="launch-side-by-side-button"]', '[data-testid="side-by-side"]']
         );
     }
@@ -379,11 +374,11 @@
     function findDiscussionStart() {
         return findBtn(
             ['start discussion', 'reply', 'respond', 'start dialogue', 'join discussion',
-             'add response', 'create response', 'write a response'],
+                'add response', 'create response', 'write a response'],
             ['Start Discussion', 'Reply', 'Respond', 'Start Dialogue', 'Join Discussion',
-             'Add Response', 'Create Response', 'Write a Response'],
+                'Add Response', 'Create Response', 'Write a Response'],
             ['[data-test="start-discussion-button"]', '[data-testid="start-discussion"]',
-             'button[aria-label*="discussion"]', 'button[aria-label*="Discussion"]']
+                'button[aria-label*="discussion"]', 'button[aria-label*="Discussion"]']
         );
     }
 
@@ -398,11 +393,11 @@
     function findDiscussionEnd() {
         return findBtn(
             ['end discussion', 'end dialogue', 'close discussion', 'close dialogue',
-             'finish discussion', 'finish dialogue', 'done'],
+                'finish discussion', 'finish dialogue', 'done'],
             ['End Discussion', 'End Dialogue', 'Close Discussion', 'Close Dialogue',
-             'Finish Discussion', 'Finish Dialogue', 'Done'],
+                'Finish Discussion', 'Finish Dialogue', 'Done'],
             ['[data-test="end-discussion-button"]', '[data-testid="end-discussion"]',
-             'button[aria-label*="End"]']
+                'button[aria-label*="End"]']
         );
     }
 
@@ -651,17 +646,9 @@
                 const isGraded = isGradedResultsScreen();
                 const startBtn = findAssignmentStart();
                 const hasQuizInputs = hasUnsubmittedQuizForm();
-                const isAutoSaved = localStorage.getItem('tm_auto') === 'true';
 
-                // Auto-restore autoEnabled if quiz form is no longer open and tm_auto preference is true
-                if (!hasQuizInputs && isAutoSaved && !autoEnabled) {
-                    autoEnabled = true;
-                    waitingForAssignment = false;
-                    updateUi();
-                }
-
-                // 1. Graded Results Screen OR 2nd Submit Modal Clicked AND modal closed OR (no inputs & next button exists)
-                if (isGraded || (userIsSubmitting && !isAnyModalOpen() && !hasQuizInputs) || (!hasQuizInputs && !startBtn && isAutoSaved)) {
+                // 1. Graded Results Screen OR 2nd Submit Modal Clicked AND modal closed
+                if (isGraded || (userIsSubmitting && !isAnyModalOpen() && !hasQuizInputs)) {
                     if (nextBtn) {
                         toast('Grade confirmed — Moving to next item...');
                         doneUrls.add(location.href);
@@ -669,7 +656,7 @@
                         waitingForAssignment = false;
                         userIsSubmitting = false;
                         submitClickCount = 0;
-                        if (isAutoSaved) {
+                        if (localStorage.getItem('tm_auto') === 'true') {
                             autoEnabled = true;
                         }
                         updateUi();
@@ -770,7 +757,7 @@
     // =============================================
     // QUIZ SOLVER LOGIC
     // =============================================
-    
+
     let isSolverRunning = false;
 
     function isQuizVisible(el) {
@@ -787,12 +774,12 @@
             el.classList.remove('cds-button-disabled', 'disabled');
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
             el.focus();
-            
+
             el.click();
 
             const form = el.closest('form');
             if (form && form.requestSubmit && el.textContent.toLowerCase().includes('submit')) {
-                try { form.requestSubmit(el); } catch(e){}
+                try { form.requestSubmit(el); } catch (e) { }
             }
         } catch (e) {
             el.click();
@@ -839,7 +826,7 @@
             if (btn === skipElement) continue;
             if (btn.closest('#tm-widget')) continue;
             if (!isQuizVisible(btn)) continue;
-            
+
             const text = (btn.textContent || btn.value || btn.getAttribute('aria-label') || '').toLowerCase().trim();
             if (!text) continue;
 
