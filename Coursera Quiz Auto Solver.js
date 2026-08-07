@@ -52,13 +52,11 @@
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
             el.focus();
             
-            const span = el.querySelector('span');
-            if (span) span.click();
             el.click();
 
-            // Try form submit as a final fallback
+            // Try form submit as a final fallback only for submit buttons
             const form = el.closest('form');
-            if (form && form.requestSubmit) {
+            if (form && form.requestSubmit && el.textContent.toLowerCase().includes('submit')) {
                 try { form.requestSubmit(el); } catch(e){}
             }
         } catch (e) {
@@ -101,9 +99,10 @@
         });
     }
 
-    function findButtonByText(textsToMatch, excludeTexts = []) {
+    function findButtonByText(textsToMatch, excludeTexts = [], skipElement = null) {
         const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.cds-button, [role="button"]'));
         for (const btn of btns) {
+            if (btn === skipElement) continue;
             if (btn.closest('#qas-widget')) continue;
             if (!isVisible(btn)) continue;
             
@@ -185,10 +184,8 @@
             log('Waiting for confirmation modal...');
             let btn2 = null;
             for (let i = 0; i < 15; i++) {
-                btn2 = findButtonByText(['submit', 'confirm', 'yes'], ['cancel', 'no', 'back']);
-                // Ensure btn2 is inside a dialog or different from btn1
-                if (btn2 && btn2 !== btn1) break;
-                btn2 = null; // reset if same
+                btn2 = findButtonByText(['submit', 'confirm', 'yes'], ['cancel', 'no', 'back'], btn1);
+                if (btn2) break;
                 await wait(400);
             }
 
