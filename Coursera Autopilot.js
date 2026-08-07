@@ -4,7 +4,7 @@
 // @version      6.0
 // @description  Complete Coursera autopilot. Handles ALL activity types: videos, readings, labs, discussions, quizzes, peer reviews, and more.
 // @author       Gohar Rehman
-// @match        *://*.coursera.org/*
+// @match        *://*.coursera.org/learn/*
 // @grant        none
 // ==/UserScript==
 
