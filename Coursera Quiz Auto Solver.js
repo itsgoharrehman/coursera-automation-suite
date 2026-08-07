@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Coursera Quiz Auto Solver
+// @name         Coursera Quiz Auto Solver (Ultra Reliable)
 // @namespace    http://tampermonkey.net/
-// @version      6.1
-// @description  Complete automated quiz solver for Coursera. Prompts for browser input, selects options, checks agreement, clicks Submit twice (page + modal popup), waits for grade to appear, and clicks Next Item.
+// @version      10.0
+// @description  Automated quiz solver for Coursera. Selects options, checks honor code, clicks Submit (page + modal popup), waits for grade to appear, and clicks Next Item.
 // @author       Gohar Rehman
 // @match        *://*.coursera.org/*
 // @grant        none
@@ -11,543 +11,268 @@
 (function () {
     'use strict';
 
-    let isProcessing = false;
+    let isRunning = false;
 
-    // Toast Notification System
-    function toast(msg) {
-        let t = document.getElementById('qas-t');
-        if (!t) {
-            t = document.createElement('div');
-            t.id = 'qas-t';
-            Object.assign(t.style, {
-                position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)',
-                background: '#0f172a', color: '#38bdf8',
-                padding: '8px 20px', borderRadius: '8px',
-                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                fontSize: '12px', fontWeight: '600', letterSpacing: '0.2px',
-                zIndex: '9999999', pointerEvents: 'none',
-                transition: 'opacity .2s ease', opacity: '0',
-                border: '1px solid rgba(56, 189, 248, 0.3)',
-                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
-                maxWidth: '500px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden'
+    // ----- UI & LOGGING -----
+    function log(msg) {
+        let box = document.getElementById('qas-toast');
+        if (!box) {
+            box = document.createElement('div');
+            box.id = 'qas-toast';
+            Object.assign(box.style, {
+                position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)',
+                background: '#0f172a', color: '#38bdf8', padding: '12px 24px',
+                borderRadius: '8px', fontFamily: 'sans-serif', fontSize: '14px',
+                fontWeight: 'bold', zIndex: '9999999', pointerEvents: 'none',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.5)', transition: 'opacity 0.2s', opacity: '1'
             });
-            document.body.appendChild(t);
+            document.body.appendChild(box);
         }
-        t.textContent = msg;
-        t.style.opacity = '1';
-        clearTimeout(t._x);
-        t._x = setTimeout(() => { t.style.opacity = '0'; }, 3500);
+        box.textContent = msg;
+        box.style.opacity = '1';
+        clearTimeout(box._t);
+        box._t = setTimeout(() => { box.style.opacity = '0'; }, 4000);
     }
 
-    function sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
-    function isElementVisible(el) {
+    function isVisible(el) {
         if (!el) return false;
-        const rect = el.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return false;
         const style = window.getComputedStyle(el);
-        if (style.display === 'none' || style.visibility === 'hidden') return false;
-        return true;
+        return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && el.offsetWidth > 0;
     }
 
-    function clickTarget(el) {
-        if (!el) return false;
+    // ----- CORE INTERACTION ACTIONS -----
+    function forceClick(el) {
+        if (!el) return;
         try {
-            if (el.disabled) {
-                el.disabled = false;
-                el.removeAttribute('disabled');
-            }
-            if (el.scrollIntoView) {
-                try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
-            }
-            if (el.focus) el.focus();
-
-            const opts = { bubbles: true, cancelable: true, view: window };
-            el.dispatchEvent(new MouseEvent('mousedown', opts));
-            el.dispatchEvent(new MouseEvent('mouseup', opts));
+            el.removeAttribute('disabled');
+            el.removeAttribute('aria-disabled');
+            el.classList.remove('cds-button-disabled', 'disabled');
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.focus();
+            
+            const span = el.querySelector('span');
+            if (span) span.click();
             el.click();
-            return true;
-        } catch (e) {
-            console.error('Click error:', e);
-            return false;
-        }
-    }
 
-    // Safely set checkbox/radio checked state for React without toggling back off
-    function setReactCheckboxChecked(checkbox, isChecked) {
-        if (!checkbox) return;
-        try {
-            if (checkbox.checked !== isChecked) {
-                checkbox.click();
-            }
-            if (checkbox.checked !== isChecked) {
-                const prototype = HTMLInputElement.prototype;
-                const descriptor = Object.getOwnPropertyDescriptor(prototype, 'checked');
-
-                if (descriptor && descriptor.set) {
-                    descriptor.set.call(checkbox, isChecked);
-                } else {
-                    checkbox.checked = isChecked;
-                }
-
-                checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-                checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+            // Try form submit as a final fallback
+            const form = el.closest('form');
+            if (form && form.requestSubmit) {
+                try { form.requestSubmit(el); } catch(e){}
             }
         } catch (e) {
-            console.error('Error setting React checkbox state:', e);
-            clickTarget(checkbox);
+            el.click();
         }
     }
 
-    // Helper to check if an input is the Honor Code / Agreement element
-    function isAgreementElement(el) {
-        if (!el) return false;
-        const container = el.closest('label, div, form, fieldset, section') || el.parentElement || el;
-        const text = (container ? container.textContent : '').toLowerCase();
-        return text.includes('agree') || text.includes('understand') || text.includes('honor') || text.includes('gohar') || text.includes('rehman') || text.includes('signature') || text.includes('i accept');
-    }
-
-    // 1. QUESTION AND OPTION FINDER
-    function findQuestions() {
-        let wrappers = Array.from(document.querySelectorAll('.rc-FormPartsQuestion, fieldset, [role="group"], [data-test*="question"], div[class*="Question"], div[class*="question"]'));
-        wrappers = wrappers.filter(w => w.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]').length > 0);
-
-        // Filter out parent wrappers if inner wrappers exist
-        wrappers = wrappers.filter(w => !wrappers.some(other => other !== w && w.contains(other)));
-
-        if (wrappers.length === 0) {
-            const inputs = Array.from(document.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]'));
-            const map = new Map();
-            inputs.forEach(inp => {
-                if (isAgreementElement(inp)) return;
-                const parent = inp.closest('form, div[class*="Question"], div[class*="question"], fieldset') || inp.name || 'default';
-                if (!map.has(parent)) map.set(parent, []);
-                map.get(parent).push(inp);
-            });
-            return Array.from(map.values()).map(inps => ({ isFallbackGroup: true, inputs: inps }));
-        }
-
-        return wrappers;
-    }
-
-    function getQuestionOptions(questionObj) {
-        if (questionObj.isFallbackGroup) return questionObj.inputs;
-
-        let options = Array.from(questionObj.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]'));
-        options = options.filter(opt => !isAgreementElement(opt));
-
-        if (options.length === 0) {
-            options = Array.from(questionObj.querySelectorAll('label, [data-test*="option"], [class*="Option"], [class*="option"]'));
-        }
-
-        return options;
-    }
-
-    function selectOptionElement(optionEl) {
-        if (!optionEl) return;
-
-        let cb = optionEl;
-        if (optionEl.tagName !== 'INPUT') {
-            cb = optionEl.querySelector('input[type="radio"], input[type="checkbox"]');
-        }
-
-        if (cb) {
-            setReactCheckboxChecked(cb, true);
-        } else {
-            clickTarget(optionEl);
+    function checkReactCheckbox(cb) {
+        if (!cb || cb.checked) return;
+        try {
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked').set;
+            if (setter) setter.call(cb, true);
+            else cb.checked = true;
+            cb.dispatchEvent(new Event('click', { bubbles: true }));
+            cb.dispatchEvent(new Event('change', { bubbles: true }));
+            cb.dispatchEvent(new Event('input', { bubbles: true }));
+        } catch (e) {
+            cb.click();
         }
     }
 
-    // 2. AGREEMENT CHECKBOX FORCE SYNCER
-    function ensureAgreementChecked() {
-        const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"], input[type="radio"]'));
-        for (const cb of checkboxes) {
-            if (isAgreementElement(cb)) {
-                setReactCheckboxChecked(cb, true);
-                return true;
-            }
-        }
-
-        // Fallback label / container search
-        for (const label of document.querySelectorAll('label, div, span')) {
-            const text = label.textContent.toLowerCase();
-            if (text.includes('understand and agree') || text.includes('honor code') || text.includes('i accept')) {
-                clickTarget(label);
-                return true;
-            }
-        }
-        return false;
+    // ----- ELEMENT FINDERS -----
+    function getQuestions() {
+        let blocks = Array.from(document.querySelectorAll('.rc-FormPartsQuestion, fieldset, [data-test*="question"], div[class*="Question"], [role="group"]'));
+        blocks = blocks.filter(b => b.querySelector('input[type="radio"], input[type="checkbox"]'));
+        return blocks.filter(b => !blocks.some(parent => parent !== b && parent.contains(b)));
     }
 
-    // Helper: Check if element is inside an active modal dialog popup
-    function isInActiveModalDialog(el) {
-        const modal = el.closest('[role="dialog"], [aria-modal="true"], .cds-dialog, .cds-modal-container');
-        return !!(modal && isElementVisible(modal));
+    function getOptions(question) {
+        return Array.from(question.querySelectorAll('input[type="radio"], input[type="checkbox"]')).filter(opt => {
+            const text = (opt.closest('label, div') || opt).textContent.toLowerCase();
+            return !text.includes('honor') && !text.includes('understand and agree');
+        });
     }
 
-    // 3. FIRST SUBMIT BUTTON FINDER (Page level)
-    function find1stSubmitBtn() {
-        const selectors = [
-            '[data-test="submit-button"]', '[data-testid="submit-button"]',
-            '[data-test="submit-quiz-button"]', '[data-testid="submit-quiz"]',
-            'button[aria-label*="Submit"]', 'button[aria-label*="submit"]',
-            'button[aria-label*="submit assignment"]', 'button[aria-label*="Submit Assignment"]'
-        ];
+    function findHonorCode() {
+        return Array.from(document.querySelectorAll('input[type="checkbox"]')).find(cb => {
+            const text = (cb.closest('label, div, form') || cb).textContent.toLowerCase();
+            return text.includes('agree') || text.includes('honor') || text.includes('work is your own');
+        });
+    }
 
-        for (const sel of selectors) {
-            for (const b of document.querySelectorAll(sel)) {
-                if (b && isElementVisible(b) && !b.closest('#qas-widget, #tm-widget') && !isInActiveModalDialog(b)) {
-                    return b;
-                }
-            }
-        }
+    function findButtonByText(textsToMatch, excludeTexts = []) {
+        const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.cds-button, [role="button"]'));
+        for (const btn of btns) {
+            if (btn.closest('#qas-widget')) continue;
+            if (!isVisible(btn)) continue;
+            
+            const text = (btn.textContent || btn.value || btn.getAttribute('aria-label') || '').toLowerCase().trim();
+            if (!text) continue;
 
-        const allBtns = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], a.cds-button, a, div, span'));
-        for (const b of allBtns) {
-            if (b.closest('#qas-widget, #tm-widget') || isInActiveModalDialog(b)) continue;
-            if (!isElementVisible(b)) continue;
+            const matches = textsToMatch.some(t => text === t || text.startsWith(t));
+            const excluded = excludeTexts.some(e => text.includes(e));
 
-            if ((b.tagName === 'DIV' || b.tagName === 'SPAN') && !b.getAttribute('role') && !b.className.includes('button') && !b.className.includes('Submit')) {
-                continue;
-            }
-
-            const text = (b.textContent || b.value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-            if (text === 'submit' || text === 'submit assignment' || text === 'submit quiz' || text === 'submit for grading' || text.startsWith('submit assignment') || text.startsWith('submit quiz')) {
-                return b;
-            }
+            if (matches && !excluded) return btn;
         }
         return null;
     }
 
-    // 4. SECOND SUBMIT BUTTON FINDER (Modal confirmation popup)
-    function find2ndModalSubmitBtn(btn1) {
-        const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"], .cds-dialog, .cds-modal-container, div[class*="ModalOverlay"], div[class*="modal-dialog"], div[class*="dialog"]');
-        for (const d of dialogs) {
-            if (d.id === 'qas-widget' || d.id === 'tm-widget') continue;
-            if (isElementVisible(d)) {
-                const btns = d.querySelectorAll('button, [role="button"], input[type="submit"], a.cds-button, a');
-                for (const b of btns) {
-                    if (b === btn1) continue;
-                    if (!isElementVisible(b)) continue;
-
-                    const text = (b.textContent || b.value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                    const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                    const dataTest = (b.getAttribute('data-test') || b.getAttribute('data-testid') || '').toLowerCase();
-
-                    if (text === 'submit' || text === 'submit assignment' || text === 'submit quiz' || text === 'confirm' || text === 'yes' ||
-                        text.includes('submit') || text.includes('confirm') || aria.includes('submit') || dataTest.includes('submit')) {
-                        return b;
-                    }
-                }
-            }
-        }
-        return null;
+    function isGradeShown() {
+        const els = document.querySelectorAll('[data-test*="grade"], [data-test*="score"], [class*="Grade"], [class*="Score"], [class*="Result"]');
+        return Array.from(els).some(el => {
+            if (!isVisible(el)) return false;
+            const t = el.textContent.toLowerCase();
+            return t.includes('%') || t.includes('grade') || t.includes('passed') || t.includes('score');
+        });
     }
 
-    // 5. GRADE DISPLAY CHECKER
-    function isGradeDisplayed() {
-        const sel = '[data-test*="grade"], [data-test*="score"], [class*="Grade"], [class*="grade"], .rc-Score, [class*="Score"]';
-        const els = document.querySelectorAll(sel);
-        for (const el of els) {
-            if (isElementVisible(el)) {
-                const text = el.textContent.toLowerCase();
-                if (text.includes('%') || text.includes('grade') || text.includes('score') || text.includes('passed') || text.includes('try again') || text.includes('submitted')) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    // 6. NEXT ITEM BUTTON FINDER
-    function findNextItemBtn() {
-        const selectors = [
-            '[data-test="next-item-button"]', '[data-testid="next-button"]',
-            '[data-test="next-button"]', 'button[aria-label*="Next"]', 'button[aria-label*="next"]',
-            'a[aria-label*="Next"]', 'a[aria-label*="next"]'
-        ];
-        for (const sel of selectors) {
-            for (const b of document.querySelectorAll(sel)) {
-                if (b && isElementVisible(b) && !b.closest('#qas-widget, #tm-widget')) return b;
-            }
-        }
-
-        for (const el of document.querySelectorAll('button, [role="button"], a.cds-button, a, span')) {
-            if (el.closest('#qas-widget, #tm-widget')) continue;
-            if (!isElementVisible(el)) continue;
-            const t = (el.textContent || el.value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-
-            if (t === 'next item' || t === 'next' || t.includes('next item') || t.includes('go to next') || t.includes('continue') ||
-                aria.includes('next item') || aria.includes('go to next')) {
-                return el;
-            }
-        }
-        return null;
-    }
-
-    // --- BROWSER INPUT PROMPTER ---
-    function triggerPromptAndSolve() {
-        if (isProcessing) {
-            toast('Solver is already running...');
-            return;
-        }
-        const inputStr = window.prompt('Enter answer numbers for each question (e.g. 1, 3, 1+2, 4):');
-        if (inputStr !== null && inputStr.trim() !== '') {
-            solveQuiz(inputStr.trim());
-        }
-    }
-
-    // --- MAIN SOLVE FLOW ---
-    async function solveQuiz(answersString) {
-        if (isProcessing) return;
-        isProcessing = true;
+    // ----- MAIN WORKFLOW -----
+    async function executeSolver(answersStr) {
+        if (isRunning) return;
+        isRunning = true;
 
         try {
-            if (!answersString || !answersString.trim()) {
-                toast('No answer input provided!');
-                return;
-            }
-
-            // Step 1: Parse Answers
-            const rawAnswers = answersString.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
-            const questions = findQuestions();
-
+            const answers = answersStr.split(/[,;\n]+/).map(a => a.trim()).filter(Boolean);
+            const questions = getQuestions();
             if (questions.length === 0) {
-                toast('No quiz questions found on page!');
+                log('❌ No questions found!');
                 return;
             }
 
-            toast(`Filling ${questions.length} questions...`);
+            log(`Filling ${questions.length} questions...`);
 
-            // Step 2: Select Answers
+            // 1. Fill answers
             for (let i = 0; i < questions.length; i++) {
-                if (i >= rawAnswers.length) break;
-
-                const q = questions[i];
-                const options = getQuestionOptions(q);
-                const ansStr = rawAnswers[i];
-                const numbers = ansStr.match(/\d+/g);
-
-                if (!numbers) continue;
-
-                numbers.forEach(n => {
-                    const idx = parseInt(n, 10) - 1;
-                    if (idx >= 0 && idx < options.length) {
-                        selectOptionElement(options[idx]);
+                if (i >= answers.length) break;
+                const options = getOptions(questions[i]);
+                const nums = answers[i].match(/\d+/g);
+                if (nums) {
+                    for (const n of nums) {
+                        const idx = parseInt(n) - 1;
+                        if (options[idx]) checkReactCheckbox(options[idx]);
                     }
-                });
-
-                await sleep(150);
-            }
-
-            // Step 3: Force Check Agreement Checkbox
-            await sleep(300);
-            ensureAgreementChecked();
-            toast('Agreement checked & validated.');
-
-            // Step 4: Click 1st Submit Button (Page Submit)
-            await sleep(500);
-            toast('Clicking 1st Submit button...');
-            let btn1 = null;
-            const t0_1 = Date.now();
-            while (Date.now() - t0_1 < 6000) {
-                btn1 = find1stSubmitBtn();
-                if (btn1) {
-                    btn1.disabled = false;
-                    btn1.removeAttribute('disabled');
-                    btn1.classList.remove('disabled');
-                    break;
                 }
-                await sleep(300);
+                await wait(150);
             }
 
-            if (btn1) {
-                clickTarget(btn1);
-                toast('1st Submit clicked! Waiting for modal popup...');
-            } else {
-                toast('1st Submit button not found.');
+            // 2. Check Honor Code
+            log('Checking Honor Code...');
+            const honorCb = findHonorCode();
+            if (honorCb) {
+                checkReactCheckbox(honorCb);
+                await wait(300);
+            }
+
+            // 3. Click 1st Submit Button
+            log('Looking for Page Submit button...');
+            let btn1 = null;
+            for (let i = 0; i < 15; i++) {
+                btn1 = findButtonByText(['submit', 'submit assignment', 'submit quiz'], ['draft', 'save', 'cancel']);
+                if (btn1) break;
+                await wait(400);
+            }
+
+            if (!btn1) {
+                log('❌ Submit button not found on page.');
                 return;
             }
 
-            // Step 5: Click 2nd Submit Button (Modal Confirmation Popup)
+            log('Clicking Submit button...');
+            forceClick(btn1);
+
+            // 4. Click 2nd Modal Confirm Button
+            log('Waiting for confirmation modal...');
             let btn2 = null;
-            const t0_2 = Date.now();
-            while (Date.now() - t0_2 < 8000) {
-                await sleep(400);
-                btn2 = find2ndModalSubmitBtn(btn1);
-                if (btn2) break;
+            for (let i = 0; i < 15; i++) {
+                btn2 = findButtonByText(['submit', 'confirm', 'yes'], ['cancel', 'no', 'back']);
+                // Ensure btn2 is inside a dialog or different from btn1
+                if (btn2 && btn2 !== btn1) break;
+                btn2 = null; // reset if same
+                await wait(400);
             }
 
             if (btn2) {
-                await sleep(300);
-                clickTarget(btn2);
-                toast('2nd Submit clicked in modal! Waiting for grade...');
-            } else {
-                toast('Submitted directly or modal auto-confirmed.');
+                log('Clicking Confirm in modal...');
+                forceClick(btn2);
             }
 
-            // Step 6: Wait for Grade to appear & Click Next Item
-            toast('Waiting for grade results...');
-            let gradeDetected = false;
-            let nextBtn = null;
-            const t0_grade = Date.now();
-
-            while (Date.now() - t0_grade < 35000) {
-                await sleep(500);
-                if (!gradeDetected && isGradeDisplayed()) {
-                    gradeDetected = true;
-                    toast('Grade detected! Looking for Next Item button...');
+            // 5. Wait for Grade
+            log('Waiting for grade results...');
+            let graded = false;
+            for (let i = 0; i < 60; i++) {
+                if (isGradeShown()) {
+                    graded = true;
+                    break;
                 }
-                nextBtn = findNextItemBtn();
+                await wait(500);
+            }
+
+            if (!graded) {
+                log('⚠️ Grade not detected, proceeding anyway.');
+            }
+
+            // 6. Click Next Item
+            log('Looking for Next Item button...');
+            let nextBtn = null;
+            for (let i = 0; i < 15; i++) {
+                nextBtn = findButtonByText(['next item', 'next', 'go to next'], ['skip']);
                 if (nextBtn) break;
+                await wait(500);
             }
 
             if (nextBtn) {
-                await sleep(800);
-                clickTarget(nextBtn);
-                toast('Next Item clicked! Moving to next activity...');
+                log('Clicking Next Item...');
+                forceClick(nextBtn);
             } else {
-                toast('Quiz submitted! Click Next Item when grade appears.');
+                log('✅ Done! Next Item button not found.');
             }
 
-        } catch (err) {
-            console.error('Quiz Solver Error:', err);
-            toast('Error: ' + err.message);
+        } catch (e) {
+            console.error(e);
+            log('Error: ' + e.message);
         } finally {
-            isProcessing = false;
+            isRunning = false;
         }
     }
 
-    // --- UI OVERLAY WIDGET ---
-    function createUi() {
+    // ----- UI WIDGET -----
+    function createWidget() {
         if (document.getElementById('qas-widget')) return;
-
-        const widget = document.createElement('div');
-        widget.id = 'qas-widget';
-        Object.assign(widget.style, {
-            position: 'fixed', zIndex: '999998',
-            display: 'inline-flex', alignItems: 'center', gap: '6px',
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            background: '#1e293b',
-            padding: '4px 8px',
-            borderRadius: '6px',
-            border: '1px solid #334155',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.35)'
+        const w = document.createElement('div');
+        w.id = 'qas-widget';
+        Object.assign(w.style, {
+            position: 'fixed', bottom: '20px', left: '20px', zIndex: '999999',
+            background: '#1e293b', border: '1px solid #334155', borderRadius: '8px',
+            padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)', userSelect: 'none'
         });
 
-        // Restore Position
-        const saved = localStorage.getItem('qas_widget_pos');
-        if (saved) {
-            try {
-                const pos = JSON.parse(saved);
-                widget.style.left = pos.x + 'px';
-                widget.style.top = pos.y + 'px';
-            } catch (_) {
-                widget.style.bottom = '20px';
-                widget.style.left = '20px';
-            }
-        } else {
-            widget.style.bottom = '20px';
-            widget.style.left = '20px';
-        }
-
-        // Drag Handle Icon
-        const dragHandle = document.createElement('span');
-        dragHandle.textContent = '⋮⋮';
-        dragHandle.title = 'Drag widget';
-        Object.assign(dragHandle.style, {
-            color: '#64748b', cursor: 'grab', fontSize: '13px',
-            fontWeight: 'bold', userSelect: 'none', paddingRight: '2px'
+        const btn = document.createElement('button');
+        btn.textContent = 'Solve & Submit';
+        Object.assign(btn.style, {
+            background: '#0ea5e9', color: '#fff', border: 'none', borderRadius: '4px',
+            padding: '6px 12px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer'
         });
-
-        let isDragging = false;
-        let dragStartX, dragStartY, wX, wY;
-
-        const startDrag = (e) => {
-            if (e.target.tagName === 'BUTTON') return;
-            isDragging = true;
-            dragHandle.style.cursor = 'grabbing';
-            dragStartX = e.clientX; dragStartY = e.clientY;
-            const r = widget.getBoundingClientRect();
-            wX = r.left; wY = r.top;
-            widget.style.bottom = ''; widget.style.right = '';
-            e.preventDefault();
+        btn.onclick = () => {
+            const ans = prompt('Enter answers (e.g., 1, 3, 1+2, 4):');
+            if (ans) executeSolver(ans);
         };
 
-        widget.addEventListener('mousedown', startDrag);
-        dragHandle.addEventListener('mousedown', startDrag);
-
-        document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            let nx = wX + (e.clientX - dragStartX);
-            let ny = wY + (e.clientY - dragStartY);
-            const r = widget.getBoundingClientRect();
-            nx = Math.max(4, Math.min(nx, innerWidth - r.width - 4));
-            ny = Math.max(4, Math.min(ny, innerHeight - r.height - 4));
-            widget.style.left = nx + 'px'; widget.style.top = ny + 'px';
-        });
-
-        document.addEventListener('mouseup', () => {
-            if (!isDragging) return;
-            isDragging = false; dragHandle.style.cursor = 'grab';
-            const r = widget.getBoundingClientRect();
-            localStorage.setItem('qas_widget_pos', JSON.stringify({ x: r.left, y: r.top }));
-        });
-
-        const stopProp = (e) => e.stopPropagation();
-
-        // Run Button
-        const runBtn = document.createElement('button');
-        runBtn.id = 'qas-run';
-        runBtn.textContent = 'Solve & Submit';
-        runBtn.title = 'Prompt for answers, check agreement, submit twice & go next [Alt+Q]';
-        Object.assign(runBtn.style, {
-            boxSizing: 'border-box',
-            background: '#0284c7', color: '#f8fafc',
-            border: '1px solid #0369a1', borderRadius: '4px',
-            padding: '5px 10px', fontSize: '11px', fontWeight: '600',
-            lineHeight: '1', cursor: 'pointer',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            whiteSpace: 'nowrap', userSelect: 'none'
-        });
-
-        runBtn.addEventListener('mousedown', stopProp);
-        runBtn.onmouseenter = () => runBtn.style.background = '#0369a1';
-        runBtn.onmouseleave = () => runBtn.style.background = '#0284c7';
-        runBtn.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            triggerPromptAndSolve();
-        };
-
-        widget.appendChild(dragHandle);
-        widget.appendChild(runBtn);
-        document.body.appendChild(widget);
+        w.appendChild(btn);
+        document.body.appendChild(w);
     }
 
-    // Shortcut (Alt + Q)
     window.addEventListener('keydown', (e) => {
-        if (e.altKey && e.key.toLowerCase() === 'q') {
-            e.preventDefault();
-            triggerPromptAndSolve();
+        if (e.altKey && e.key === 'q') {
+            const ans = prompt('Enter answers (e.g., 1, 3, 1+2, 4):');
+            if (ans) executeSolver(ans);
         }
     });
 
-    // Init
-    function init() {
-        createUi();
-        const obs = new MutationObserver(() => {
-            if (!document.getElementById('qas-widget')) createUi();
-        });
-        obs.observe(document.body || document.documentElement, { childList: true, subtree: true });
-    }
-
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+        document.addEventListener('DOMContentLoaded', createWidget);
     } else {
-        init();
+        createWidget();
     }
 })();
