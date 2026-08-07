@@ -16,7 +16,7 @@
     const CLICK_DELAY = 400;
     const AFTER_NAV_WAIT = 2200;
     const VIDEO_LOAD_TIMEOUT = 6000;
-    const SCAN_INTERVAL = 600;
+    const SCAN_INTERVAL = 100;
 
     // --- State ---
     let autoEnabled = localStorage.getItem('tm_auto') === 'true';
