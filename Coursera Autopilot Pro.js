@@ -917,7 +917,7 @@
                     graded = true;
                     break;
                 }
-                await sleep(500);
+                await sleep(300);
             }
 
             if (!graded) {
