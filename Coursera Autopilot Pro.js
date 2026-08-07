@@ -14,7 +14,7 @@
     // --- Configuration ---
     const SECONDS_FROM_END = 3;
     const CLICK_DELAY = 400;
-    const AFTER_NAV_WAIT = 2200;
+    const AFTER_NAV_WAIT = 2000;
     const VIDEO_LOAD_TIMEOUT = 6000;
     const SCAN_INTERVAL = 100;
 
