@@ -182,10 +182,8 @@
             if (honorCheckbox && !honorCheckbox.checked) {
                 honorCheckbox.click();
                 createToast('Checked honor code.');
-                await sleep(2000); // Let React update state and finish submit button animations
-            } else {
-                await sleep(500);
             }
+            await sleep(500);
 
             let submitBtn = null;
             for (let k = 0; k < 10; k++) {
@@ -200,13 +198,13 @@
             }
             
             if (submitBtn) {
-                await sleep(1000); // Extra wait for any fade-in animation to finish
                 submitBtn.click();
                 createToast('Clicked Submit. Waiting for confirmation...');
+                
+                await sleep(2000); // 2s delay for the modal to appear
 
                 let modalSubmitBtn = null;
                 for (let j = 0; j < 6; j++) {
-                    await sleep(500);
                     modalSubmitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
                         if (b.id === 'cas-fill-btn' || b.closest('#cas-widget') || b.disabled) return false;
                         const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
@@ -214,6 +212,19 @@
                         return (t === 'submit' || t.startsWith('submit ') || t === 'yes' || t === 'confirm' || t === 'submit anyway') && b !== submitBtn && isVisible(b);
                     });
                     if (modalSubmitBtn) break;
+                    await sleep(500);
+                }
+
+                if (!modalSubmitBtn) {
+                    createToast('Modal not found. Retrying first submit...');
+                    submitBtn.click();
+                    await sleep(1500);
+                    modalSubmitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
+                        if (b.id === 'cas-fill-btn' || b.closest('#cas-widget') || b.disabled) return false;
+                        const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                        if (t.includes('search') || t.includes('unsubmit') || t.includes('review')) return false;
+                        return (t === 'submit' || t.startsWith('submit ') || t === 'yes' || t === 'confirm' || t === 'submit anyway') && b !== submitBtn && isVisible(b);
+                    });
                 }
 
                 if (modalSubmitBtn) {
@@ -524,17 +535,6 @@
 
             if (autoEnabled) {
                 setTimeout(processPage, 2000);
-            }
-        }
-
-        if (location.href.includes('/attempt')) {
-            const honorCheckbox = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(c => {
-                const text = (c.closest('label') || c.parentElement || c).textContent.toLowerCase();
-                return text.includes('understand and agree') || text.includes('honor code') || text.includes('my own work');
-            });
-            if (honorCheckbox && !honorCheckbox.checked) {
-                honorCheckbox.click();
-                createToast('Checked honor code.');
             }
         }
     }, 1000);
