@@ -182,7 +182,7 @@
             if (honorCheckbox && !honorCheckbox.checked) {
                 honorCheckbox.click();
                 createToast('Checked honor code.');
-                await sleep(1400); // Let React update state and finish submit button animations
+                await sleep(2000); // Let React update state and finish submit button animations
             } else {
                 await sleep(500);
             }
@@ -524,6 +524,17 @@
 
             if (autoEnabled) {
                 setTimeout(processPage, 2000);
+            }
+        }
+
+        if (location.href.includes('/attempt')) {
+            const honorCheckbox = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(c => {
+                const text = (c.closest('label') || c.parentElement || c).textContent.toLowerCase();
+                return text.includes('understand and agree') || text.includes('honor code') || text.includes('my own work');
+            });
+            if (honorCheckbox && !honorCheckbox.checked) {
+                honorCheckbox.click();
+                createToast('Checked honor code.');
             }
         }
     }, 1000);
