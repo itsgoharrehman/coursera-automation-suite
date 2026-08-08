@@ -8,7 +8,7 @@
 // @grant        none
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
     let isRunning = false;
@@ -74,7 +74,7 @@
             }
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
-        } catch(e) {
+        } catch (e) {
             console.error('[Coursera Auto Skip] Error setting native value:', e);
             el.value = value;
             el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -91,12 +91,11 @@
         try {
             const questions = [];
             const processedEls = new Set();
-            
+
             const mainContainer = document.querySelector('main, [role="main"], .rc-Assignment, .rc-Quiz, .rc-Attempt') || document.body;
             const allInputs = Array.from(mainContainer.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([readonly]):not([disabled]), textarea:not([readonly]):not([disabled])'));
-            
+
             const relevantInputs = allInputs.filter(el => {
-                if (!isVisible(el)) return false;
                 const text = (el.closest('label') || el.parentElement || el).textContent.toLowerCase();
                 if (el.type === 'checkbox' && (text.includes('understand and agree') || text.includes('honor code') || text.includes('my own work'))) {
                     return false;
@@ -111,10 +110,10 @@
             questionContainers.forEach(container => {
                 const containerInputs = relevantInputs.filter(el => container.contains(el) && !processedEls.has(el));
                 if (containerInputs.length === 0) return;
-                
+
                 const choiceInputs = containerInputs.filter(el => el.type === 'radio' || el.type === 'checkbox');
                 const textInputs = containerInputs.filter(el => el.type !== 'radio' && el.type !== 'checkbox');
-                
+
                 if (choiceInputs.length > 0) {
                     const groupsByName = {};
                     const noNameGroup = [];
@@ -126,36 +125,21 @@
                             noNameGroup.push(el);
                         }
                     });
-                    
+
                     Object.values(groupsByName).forEach(g => {
                         questions.push({ type: g[0].type, elements: g });
                         g.forEach(el => processedEls.add(el));
                     });
-                    
+
                     if (noNameGroup.length > 0) {
                         questions.push({ type: noNameGroup[0].type, elements: noNameGroup });
                         noNameGroup.forEach(el => processedEls.add(el));
                     }
                 }
-                
+
                 if (textInputs.length > 0) {
                     questions.push({ type: 'text', elements: textInputs });
                     textInputs.forEach(el => processedEls.add(el));
-                }
-            });
-
-            relevantInputs.forEach(el => {
-                if (processedEls.has(el)) return;
-                const isChoice = el.type === 'radio' || el.type === 'checkbox';
-                let group = [];
-                if (isChoice && el.name) {
-                    group = relevantInputs.filter(e => e.name === el.name);
-                } else {
-                    group = [el];
-                }
-                group.forEach(e => processedEls.add(e));
-                if (group.length > 0) {
-                    questions.push({ type: isChoice ? el.type : 'text', elements: group });
                 }
             });
 
@@ -171,7 +155,7 @@
             for (let i = 0; i < Math.min(answers.length, questions.length); i++) {
                 const ans = answers[i].trim();
                 if (!ans) continue;
-                
+
                 const q = questions[i];
                 if (q.type === 'radio') {
                     const idx = parseInt(ans) - 1;
@@ -202,30 +186,32 @@
 
             await sleep(500);
 
-            const submitBtn = Array.from(document.querySelectorAll('button')).find(b => {
-                const t = b.textContent.trim().toLowerCase();
-                return t.includes('submit') && !t.includes('unsubmit') && isVisible(b);
+            const submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
+                if (b.id === 'cas-fill-btn' || b.closest('#cas-widget')) return false;
+                const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                return (t === 'submit' || t === 'submit assignment' || t === 'submit quiz') && isVisible(b);
             });
-            
+
             if (submitBtn) {
                 submitBtn.click();
                 createToast('Clicked Submit. Waiting for confirmation...');
-                
+
                 let modalSubmitBtn = null;
                 for (let j = 0; j < 6; j++) {
                     await sleep(500);
-                    modalSubmitBtn = Array.from(document.querySelectorAll('button')).find(b => {
-                        const t = b.textContent.trim().toLowerCase();
-                        return (t.includes('submit') || t === 'yes' || t === 'confirm' || t.includes('continue')) && b !== submitBtn && isVisible(b);
+                    modalSubmitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
+                        if (b.id === 'cas-fill-btn' || b.closest('#cas-widget')) return false;
+                        const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                        return (t === 'submit' || t === 'yes' || t === 'confirm' || t === 'submit anyway') && b !== submitBtn && isVisible(b);
                     });
                     if (modalSubmitBtn) break;
                 }
-                
+
                 if (modalSubmitBtn) {
                     modalSubmitBtn.click();
                     createToast('Confirmed submission.');
                 }
-                
+
                 createToast('Waiting for page to process...');
                 let feedbackWait = 0;
                 while (feedbackWait < 15) {
@@ -250,18 +236,20 @@
 
     async function processPage() {
         if (isRunning || !autoEnabled) return;
-        
+
         const url = location.href.toLowerCase();
         const isAttempt = url.includes('/attempt');
         const isViewFeedback = url.includes('/view-feedback');
         const isAssignmentStart = (url.includes('/assignment-submission') || url.includes('/exam') || url.includes('/quiz')) && !isAttempt && !isViewFeedback;
         const isVideo = url.includes('/lecture');
         const isReading = url.includes('/supplement') && !isAssignmentStart && !isAttempt && !isViewFeedback;
+        const isUngradedLti = url.includes('/ungradedlti');
+        const isUngradedWidget = url.includes('/ungradedwidget');
 
-        if (!isVideo && !isReading && !isAssignmentStart && !isAttempt && !isViewFeedback) return;
+        if (!isVideo && !isReading && !isAssignmentStart && !isAttempt && !isViewFeedback && !isUngradedLti && !isUngradedWidget) return;
 
         isRunning = true;
-        
+
         try {
             if (isVideo) {
                 createToast('🎥 Video detected. Waiting for it to load...');
@@ -280,9 +268,9 @@
                     video.currentTime = skipTo;
                     createToast(`Skipped to last ${SECONDS_FROM_END} seconds (muted & 2x speed).`);
                 }
-                
+
                 if (video.paused) {
-                    try { await video.play(); } catch(e) {}
+                    try { await video.play(); } catch (e) { }
                 }
 
                 await new Promise(resolve => {
@@ -293,25 +281,76 @@
                         }
                     }, 500);
                 });
-                
+
                 createToast('✅ Video finished.');
                 await sleep(1000);
             } else if (isReading) {
                 createToast('📖 Reading detected.');
-                await sleep(1500); 
-                
+                await sleep(1500);
+
                 const markCompleteBtn = Array.from(document.querySelectorAll('button, [role="button"]'))
                     .find(b => {
                         const t = (b.textContent || '').trim().toLowerCase();
                         return t === 'mark as completed' || t === 'mark as complete';
                     });
-                
+
                 if (markCompleteBtn && !markCompleteBtn.disabled) {
                     markCompleteBtn.click();
                     createToast('✅ Marked as complete.');
                     await sleep(1000);
                 } else {
                     createToast('Already complete or no button found.');
+                }
+            } else if (isUngradedWidget) {
+                createToast('🧩 Ungraded Widget detected.');
+                await sleep(1500);
+
+                const markCompleteBtn = Array.from(document.querySelectorAll('button, [role="button"]'))
+                    .find(b => {
+                        const t = (b.textContent || '').trim().toLowerCase();
+                        return t === 'mark as completed' || t === 'mark as complete';
+                    });
+
+                if (markCompleteBtn && !markCompleteBtn.disabled) {
+                    markCompleteBtn.click();
+                    createToast('✅ Marked as complete.');
+                    await sleep(1000);
+                } else {
+                    createToast('Already complete or no button found.');
+                }
+            } else if (isUngradedLti) {
+                createToast('🛠️ Ungraded LTI detected.');
+                await sleep(1500);
+
+                const cb = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(c => {
+                    const text = (c.closest('label') || c.parentElement || document.body).textContent.toLowerCase();
+                    return text.includes('responsibly') || text.includes('agree');
+                });
+                if (cb && !cb.checked) {
+                    cb.click();
+                    createToast('Checked agreement.');
+                    await sleep(1000);
+                }
+
+                createToast('Waiting for Launch button...');
+                const launchWait = Date.now();
+                let launchBtn = null;
+                while (Date.now() - launchWait < 6000) {
+                    launchBtn = Array.from(document.querySelectorAll('button, a, [role="button"]')).find(b => {
+                        if (b.disabled || b.offsetParent === null) return false;
+                        const t = (b.textContent || '').trim().toLowerCase();
+                        return t.includes('launch') || t.includes('open tool') || t.includes('start lab') || t.includes('open workspace') || t.includes('open lab');
+                    });
+                    if (launchBtn) break;
+                    await sleep(500);
+                }
+
+                if (launchBtn) {
+                    launchBtn.click();
+                    createToast('🚀 Launched App.');
+                    await sleep(1500);
+                } else {
+                    createToast('❌ Could not find Launch button.');
                 }
             } else if (isAssignmentStart) {
                 createToast('📝 Assignment page detected. Looking for Start/Resume button...');
@@ -326,7 +365,7 @@
                     if (startBtn) break;
                     await sleep(500);
                 }
-                
+
                 if (startBtn) {
                     startBtn.click();
                     createToast('🚀 Starting/Resuming assignment...');
@@ -344,7 +383,7 @@
                 await sleep(2000);
             }
 
-            if (isVideo || isReading || isViewFeedback) {
+            if (isVideo || isReading || isViewFeedback || isUngradedLti || isUngradedWidget) {
                 const start = Date.now();
                 let nextBtn = null;
                 while (Date.now() - start < 4000) {
@@ -352,7 +391,7 @@
                     if (nextBtn) break;
                     await sleep(500);
                 }
-                
+
                 if (nextBtn) {
                     createToast('⏭️ Moving to next item...');
                     nextBtn.click();
@@ -424,8 +463,8 @@
     setInterval(() => {
         if (location.href !== lastUrl) {
             lastUrl = location.href;
-            isRunning = false; 
-            
+            isRunning = false;
+
             const fillBtn = document.getElementById('cas-fill-btn');
             if (fillBtn) {
                 fillBtn.style.display = location.href.includes('/attempt') ? 'block' : 'none';
