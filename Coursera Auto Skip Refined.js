@@ -261,13 +261,9 @@
                 }
 
                 video.muted = true;
-                video.playbackRate = 2.0;
+                video.playbackRate = 16.0;
 
-                const skipTo = Math.max(0, video.duration - SECONDS_FROM_END);
-                if (video.currentTime < skipTo) {
-                    video.currentTime = skipTo;
-                    createToast(`Skipped to last ${SECONDS_FROM_END} seconds (muted & 2x speed).`);
-                }
+                createToast('Fast-forwarding video at 16x speed...');
 
                 if (video.paused) {
                     try { await video.play(); } catch (e) { }
