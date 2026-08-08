@@ -187,7 +187,9 @@
             let submitBtn = null;
             for (let k = 0; k < 10; k++) {
                 submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
-                    if (b.id === 'cas-fill-btn' || b.closest('#cas-widget') || b.disabled) return false;
+                    if (b.id === 'cas-fill-btn' || b.closest('#cas-widget')) return false;
+                    const isDisabled = b.disabled || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('disabled') || b.className.toLowerCase().includes('disabled');
+                    if (isDisabled) return false;
                     const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
                     return (t === 'submit' || t.startsWith('submit ') || t.startsWith('submit assignment') || t.startsWith('submit quiz')) && isVisible(b);
                 });
