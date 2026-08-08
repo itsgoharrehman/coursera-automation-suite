@@ -196,11 +196,11 @@
                 if (submitBtn) break;
                 await sleep(500);
             }
-            
+
             if (submitBtn) {
                 submitBtn.click();
                 createToast('Clicked Submit. Waiting for confirmation...');
-                
+
                 await sleep(2000); // 2s delay for the modal to appear
 
                 let modalSubmitBtn = null;

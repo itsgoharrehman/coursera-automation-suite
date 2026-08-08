@@ -31,7 +31,8 @@ Your primary daily driver for blazing-fast course navigation.
 - **Videos**: Instantly fast-forwards videos to the last 3 seconds to guarantee Coursera marks them as watched.
 - **Readings & Widgets**: Automatically clicks "Mark as Complete".
 - **LTI Labs**: Fully supports both Graded and Ungraded LTI labs (auto-checks agreements and clicks "Launch App").
-- **Interactive UI**: Features a sleek, draggable widget centered at the bottom of your screen. Includes an Auto-Skip toggle and a dedicated "Fill & Submit" button to manually trigger the automated quiz solver when you are ready.
+- **Smart Quiz Solver**: Includes a robust CSV parser for quizzes. Supports multi-blank puzzles using `+` (e.g., `5+10`) and text answers with internal commas using quotes (e.g., `"Hello, World"`). Also automatically finds and supports custom un-classed interactive quiz plugins.
+- **Interactive UI**: Features a sleek, draggable widget centered at the bottom of your screen. Includes an Auto-Skip toggle, a "Skip Now" override button, and a dedicated "Fill & Submit" button to manually trigger the automated quiz solver when you are ready.
 
 ### 2. `Autopilot Pro.js` (Fully Autonomous)
 The ultimate all-in-one powerhouse.
@@ -41,8 +42,9 @@ The ultimate all-in-one powerhouse.
 - Highly recommended if you want a fully hands-off experience.
 
 ### 3. `Plain Copy.js` (Utility)
-A background utility script that forces plain-text copying.
+A background utility script that forces perfectly clean plain-text copying.
 - Strips out Coursera's hidden "AI Agent Compliance Verification Required" text that gets secretly injected into your clipboard when you try to copy quiz questions.
+- Automatically removes question numbers (`1.`, `2.`) and point values (`1 point`) so you have pristine text ready to paste to your AI.
 
 ### 4. `Quiz Solver.js` (Utility)
 A standalone version of the quiz solver. 
