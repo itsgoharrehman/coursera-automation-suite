@@ -186,11 +186,10 @@
 
             let submitBtn = null;
             for (let k = 0; k < 10; k++) {
-                submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
-                    if (b.id === 'cas-fill-btn' || b.closest('#cas-widget')) return false;
-                    const isDisabled = b.disabled || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('disabled') || b.className.toLowerCase().includes('disabled');
-                    if (isDisabled) return false;
+                submitBtn = Array.from(mainContainer.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
+                    if (b.id === 'cas-fill-btn' || b.closest('#cas-widget') || b.disabled) return false;
                     const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                    if (t.includes('search') || t.includes('unsubmit') || t.includes('review')) return false;
                     return (t === 'submit' || t.startsWith('submit ') || t.startsWith('submit assignment') || t.startsWith('submit quiz')) && isVisible(b);
                 });
                 if (submitBtn) break;
@@ -206,8 +205,9 @@
                 for (let j = 0; j < 6; j++) {
                     await sleep(500);
                     modalSubmitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
-                        if (b.id === 'cas-fill-btn' || b.closest('#cas-widget')) return false;
+                        if (b.id === 'cas-fill-btn' || b.closest('#cas-widget') || b.disabled) return false;
                         const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                        if (t.includes('search') || t.includes('unsubmit') || t.includes('review')) return false;
                         return (t === 'submit' || t.startsWith('submit ') || t === 'yes' || t === 'confirm' || t === 'submit anyway') && b !== submitBtn && isVisible(b);
                     });
                     if (modalSubmitBtn) break;
