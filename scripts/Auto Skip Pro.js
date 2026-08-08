@@ -184,15 +184,19 @@
                 createToast('Checked honor code.');
             }
 
-            await sleep(500);
-
-            const submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
-                if (b.id === 'cas-fill-btn' || b.closest('#cas-widget')) return false;
-                const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
-                return (t === 'submit' || t.startsWith('submit ') || t.startsWith('submit assignment') || t.startsWith('submit quiz')) && isVisible(b);
-            });
-
+            let submitBtn = null;
+            for (let k = 0; k < 10; k++) {
+                submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
+                    if (b.id === 'cas-fill-btn' || b.closest('#cas-widget') || b.disabled) return false;
+                    const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                    return (t === 'submit' || t.startsWith('submit ') || t.startsWith('submit assignment') || t.startsWith('submit quiz')) && isVisible(b);
+                });
+                if (submitBtn) break;
+                await sleep(500);
+            }
+            
             if (submitBtn) {
+                await sleep(1000); // Extra wait for any fade-in animation to finish
                 submitBtn.click();
                 createToast('Clicked Submit. Waiting for confirmation...');
 
