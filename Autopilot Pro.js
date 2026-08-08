@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         Coursera Autopilot Pro
+// @name         Autopilot Pro
 // @namespace    http://tampermonkey.net/
 // @version      1.0
 // @description  Complete Coursera autopilot. Handles ALL activity types: videos, readings, labs, discussions, quizzes, peer reviews, and more. Merged with Quiz Auto Solver.
-// @author       Gohar Rehman
-// @match        *://*.coursera.org/*
+// @author       Gohar Rehman (https://github.com/itsgoharrehman)
+// @match        *://*.coursera.org/learn*
 // @grant        none
 // ==/UserScript==
 

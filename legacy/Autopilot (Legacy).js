@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         Coursera Autopilot
+// @name         Autopilot (Legacy)
 // @namespace    http://tampermonkey.net/
 // @version      6.0
 // @description  Complete Coursera autopilot. Handles ALL activity types: videos, readings, labs, discussions, quizzes, peer reviews, and more.
-// @author       Gohar Rehman
-// @match        *://*.coursera.org/*
+// @author       Gohar Rehman (https://github.com/itsgoharrehman)
+// @match        *://*.coursera.org/learn*
 // @grant        none
 // ==/UserScript==
 

@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         Coursera Auto Skip
+// @name         Auto Skip Pro 
 // @namespace    http://tampermonkey.net/
 // @version      1.1
 // @description  Automatically skips Coursera videos (fast-forward) and readings (mark complete).
-// @author       Gohar Rehman
-// @match        *://*.coursera.org/*
+// @author       Gohar Rehman (https://github.com/itsgoharrehman)
+// @match        *://*.coursera.org/learn*
 // @grant        none
 // ==/UserScript==
 

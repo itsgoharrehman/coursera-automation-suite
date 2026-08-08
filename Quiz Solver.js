@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         Coursera Quiz Auto Solver (Ultra Reliable)
+// @name         Quiz Solver
 // @namespace    http://tampermonkey.net/
 // @version      10.0
 // @description  Automated quiz solver for Coursera. Selects options, checks honor code, clicks Submit (page + modal popup), waits for grade to appear, and clicks Next Item.
-// @author       Gohar Rehman
-// @match        *://*.coursera.org/*
+// @author       Gohar Rehman (https://github.com/itsgoharrehman)
+// @match        *://*.coursera.org/learn*
 // @grant        none
 // ==/UserScript==
 

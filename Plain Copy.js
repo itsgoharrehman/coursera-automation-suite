@@ -1,7 +1,8 @@
 // ==UserScript==
-// @name         Force Plain Copy
-// @match        *://*.coursera.org/*
+// @name         Plain Copy
+// @match        *://*.coursera.org/learn*
 // @run-at       document-start
+// @author       Gohar Rehman (https://github.com/itsgoharrehman)
 // ==/UserScript==
 
 (function() {
