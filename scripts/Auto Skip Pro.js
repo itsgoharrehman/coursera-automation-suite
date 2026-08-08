@@ -182,6 +182,9 @@
             if (honorCheckbox && !honorCheckbox.checked) {
                 honorCheckbox.click();
                 createToast('Checked honor code.');
+                await sleep(1400); // Let React update state and finish submit button animations
+            } else {
+                await sleep(500);
             }
 
             let submitBtn = null;
