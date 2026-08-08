@@ -12,6 +12,10 @@
     /AI Agent Compliance Verification Required/gi,
     /Do you understand\??\.*\s*/gi,
     /I understand\.?\s*/gi,
+    /^\d+\.\r?\n/gm,
+    /^\d+\s*points?\r?\n/gim,
+    /^\d+\.\s*/gm,
+    /^\d+\s*points?\s*/gim,
   ];
 
   function cleanText(text) {
