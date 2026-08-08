@@ -189,7 +189,7 @@
             const submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
                 if (b.id === 'cas-fill-btn' || b.closest('#cas-widget')) return false;
                 const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
-                return (t === 'submit' || t === 'submit assignment' || t === 'submit quiz') && isVisible(b);
+                return (t === 'submit' || t.startsWith('submit ') || t.startsWith('submit assignment') || t.startsWith('submit quiz')) && isVisible(b);
             });
 
             if (submitBtn) {
@@ -202,7 +202,7 @@
                     modalSubmitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
                         if (b.id === 'cas-fill-btn' || b.closest('#cas-widget')) return false;
                         const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
-                        return (t === 'submit' || t === 'yes' || t === 'confirm' || t === 'submit anyway') && b !== submitBtn && isVisible(b);
+                        return (t === 'submit' || t.startsWith('submit ') || t === 'yes' || t === 'confirm' || t === 'submit anyway') && b !== submitBtn && isVisible(b);
                     });
                     if (modalSubmitBtn) break;
                 }
@@ -243,10 +243,10 @@
         const isAssignmentStart = (url.includes('/assignment-submission') || url.includes('/exam') || url.includes('/quiz')) && !isAttempt && !isViewFeedback;
         const isVideo = url.includes('/lecture');
         const isReading = url.includes('/supplement') && !isAssignmentStart && !isAttempt && !isViewFeedback;
-        const isUngradedLti = url.includes('/ungradedlti');
+        const isLti = url.includes('/ungradedlti') || url.includes('/gradedlti');
         const isUngradedWidget = url.includes('/ungradedwidget');
 
-        if (!isVideo && !isReading && !isAssignmentStart && !isAttempt && !isViewFeedback && !isUngradedLti && !isUngradedWidget) return;
+        if (!isVideo && !isReading && !isAssignmentStart && !isAttempt && !isViewFeedback && !isLti && !isUngradedWidget) return;
 
         isRunning = true;
 
@@ -261,9 +261,13 @@
                 }
 
                 video.muted = true;
-                video.playbackRate = 16.0;
+                video.playbackRate = 2.0;
 
-                createToast('Fast-forwarding video at 16x speed...');
+                const skipTo = Math.max(0, video.duration - SECONDS_FROM_END);
+                if (video.currentTime < skipTo) {
+                    video.currentTime = skipTo;
+                    createToast(`Skipped to last ${SECONDS_FROM_END} seconds (muted & 2x speed).`);
+                }
 
                 if (video.paused) {
                     try { await video.play(); } catch (e) { }
@@ -314,8 +318,8 @@
                 } else {
                     createToast('Already complete or no button found.');
                 }
-            } else if (isUngradedLti) {
-                createToast('🛠️ Ungraded LTI detected.');
+            } else if (isLti) {
+                createToast('🛠️ LTI detected.');
                 await sleep(1500);
 
                 const cb = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(c => {
@@ -379,7 +383,7 @@
                 await sleep(2000);
             }
 
-            if (isVideo || isReading || isViewFeedback || isUngradedLti || isUngradedWidget) {
+            if (isVideo || isReading || isViewFeedback || isLti || isUngradedWidget) {
                 const start = Date.now();
                 let nextBtn = null;
                 while (Date.now() - start < 4000) {
@@ -407,18 +411,61 @@
         const w = document.createElement('div');
         w.id = 'cas-widget';
         Object.assign(w.style, {
-            position: 'fixed', bottom: '20px', right: '20px', zIndex: '999998',
-            background: '#0f172a', padding: '8px', borderRadius: '8px',
+            position: 'fixed', zIndex: '999998',
+            background: '#0f172a', padding: '6px', borderRadius: '8px',
             border: '1px solid #334155', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-            display: 'flex', gap: '8px', fontFamily: 'sans-serif'
+            display: 'flex', gap: '6px', fontFamily: 'sans-serif',
+            userSelect: 'none', cursor: 'grab'
+        });
+
+        const saved = localStorage.getItem('cas_widget_pos');
+        if (saved) {
+            try {
+                const pos = JSON.parse(saved);
+                w.style.left = pos.x + 'px';
+                w.style.top = pos.y + 'px';
+            } catch (e) {
+                w.style.left = '50%'; w.style.bottom = '20px'; w.style.transform = 'translateX(-50%)';
+            }
+        } else {
+            w.style.left = '50%'; w.style.bottom = '20px'; w.style.transform = 'translateX(-50%)';
+        }
+
+        let isDragging = false;
+        let startX, startY, wX, wY;
+
+        w.addEventListener('mousedown', (e) => {
+            if (e.target.tagName === 'BUTTON') return;
+            isDragging = true;
+            w.style.cursor = 'grabbing';
+            startX = e.clientX; startY = e.clientY;
+            const r = w.getBoundingClientRect();
+            wX = r.left; wY = r.top;
+            w.style.bottom = ''; w.style.transform = '';
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            let nx = wX + (e.clientX - startX);
+            let ny = wY + (e.clientY - startY);
+            const r = w.getBoundingClientRect();
+            nx = Math.max(4, Math.min(nx, innerWidth - r.width - 4));
+            ny = Math.max(4, Math.min(ny, innerHeight - r.height - 4));
+            w.style.left = nx + 'px'; w.style.top = ny + 'px';
+        });
+        document.addEventListener('mouseup', () => {
+            if (!isDragging) return;
+            isDragging = false; w.style.cursor = 'grab';
+            const r = w.getBoundingClientRect();
+            localStorage.setItem('cas_widget_pos', JSON.stringify({ x: r.left, y: r.top }));
         });
 
         const toggleBtn = document.createElement('button');
         toggleBtn.textContent = autoEnabled ? 'Auto Skip: ON' : 'Auto Skip: OFF';
         Object.assign(toggleBtn.style, {
             background: autoEnabled ? '#059669' : '#475569', color: '#fff',
-            border: 'none', borderRadius: '4px', padding: '6px 12px',
-            cursor: 'pointer', fontWeight: 'bold'
+            border: 'none', borderRadius: '4px', padding: '4px 10px',
+            cursor: 'pointer', fontWeight: 'bold', fontSize: '12px'
         });
         toggleBtn.onclick = () => {
             autoEnabled = !autoEnabled;
@@ -432,8 +479,8 @@
         skipBtn.textContent = 'Skip Now';
         Object.assign(skipBtn.style, {
             background: '#2563eb', color: '#fff',
-            border: 'none', borderRadius: '4px', padding: '6px 12px',
-            cursor: 'pointer', fontWeight: 'bold'
+            border: 'none', borderRadius: '4px', padding: '4px 10px',
+            cursor: 'pointer', fontWeight: 'bold', fontSize: '12px'
         });
         skipBtn.onclick = () => {
             if (!isRunning) processPage();
@@ -444,8 +491,8 @@
         fillBtn.textContent = 'Fill & Submit';
         Object.assign(fillBtn.style, {
             background: '#8b5cf6', color: '#fff',
-            border: 'none', borderRadius: '4px', padding: '6px 12px',
-            cursor: 'pointer', fontWeight: 'bold',
+            border: 'none', borderRadius: '4px', padding: '4px 10px',
+            cursor: 'pointer', fontWeight: 'bold', fontSize: '12px',
             display: location.href.includes('/attempt') ? 'block' : 'none'
         });
         fillBtn.onclick = handleFillAndSubmit;
