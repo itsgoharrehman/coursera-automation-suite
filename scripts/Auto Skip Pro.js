@@ -254,8 +254,9 @@
         }
     }
 
-    async function processPage() {
-        if (isRunning || !autoEnabled) return;
+    async function processPage(force = false) {
+        if (isRunning) return;
+        if (!force && !autoEnabled) return;
 
         const url = location.href.toLowerCase();
         const isAttempt = url.includes('/attempt');
@@ -503,7 +504,7 @@
             cursor: 'pointer', fontWeight: 'bold', fontSize: '12px'
         });
         skipBtn.onclick = () => {
-            if (!isRunning) processPage();
+            if (!isRunning) processPage(true);
         };
 
         const fillBtn = document.createElement('button');
