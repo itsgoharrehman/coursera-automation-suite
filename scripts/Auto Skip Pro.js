@@ -97,6 +97,8 @@
 
             const relevantInputs = allInputs.filter(el => {
                 const text = (el.closest('label') || el.parentElement || el).textContent.toLowerCase();
+                const placeholder = (el.placeholder || '').toLowerCase();
+                if (el.type === 'search' || placeholder.includes('search') || el.closest('form[role="search"]') || el.name === 'q') return false;
                 if (el.type === 'checkbox' && (text.includes('understand and agree') || text.includes('honor code') || text.includes('my own work'))) {
                     return false;
                 }
@@ -148,10 +150,24 @@
                 return;
             }
 
-            const inputStr = prompt(`Found ${questions.length} questions.\nEnter answers separated by commas.\nFor checkboxes, use + (e.g. 1+2).\nExample: 1, 1+3, text answer`);
+            const inputStr = prompt(`Found ${questions.length} questions.\nSeparators: commas for questions, + for multiple options/blanks.\nUse quotes "..." for text answers with commas.\nExample: 1, 1+3, "text 1"+"text 2"`);
             if (!inputStr) return;
 
-            const answers = inputStr.split(',');
+            const answers = [];
+            let curr = '';
+            let inQuotes = false;
+            for (let i = 0; i < inputStr.length; i++) {
+                const char = inputStr[i];
+                if (char === '"') inQuotes = !inQuotes;
+                else if (char === ',' && !inQuotes) {
+                    answers.push(curr.trim());
+                    curr = '';
+                } else {
+                    curr += char;
+                }
+            }
+            answers.push(curr.trim());
+
             for (let i = 0; i < Math.min(answers.length, questions.length); i++) {
                 const ans = answers[i].trim();
                 if (!ans) continue;
@@ -171,7 +187,21 @@
                         }
                     });
                 } else if (q.type === 'text') {
-                    q.elements.forEach(el => setNativeValue(el, ans));
+                    const parts = ans.split('+').map(p => {
+                        let text = p.trim();
+                        if (text.startsWith('"') && text.endsWith('"')) {
+                            text = text.substring(1, text.length - 1);
+                        }
+                        return text;
+                    });
+                    
+                    q.elements.forEach((el, idx) => {
+                        if (idx < parts.length) {
+                            setNativeValue(el, parts[idx]);
+                        } else if (parts.length === 1) {
+                            setNativeValue(el, parts[0]);
+                        }
+                    });
                 }
             }
 
