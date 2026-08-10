@@ -296,8 +296,9 @@
         const isReading = url.includes('/supplement') && !isAssignmentStart && !isAttempt && !isViewFeedback;
         const isLti = url.includes('/ungradedlti') || url.includes('/gradedlti');
         const isUngradedWidget = url.includes('/ungradedwidget');
+        const isProgramming = url.includes('/programming');
 
-        if (!isVideo && !isReading && !isAssignmentStart && !isAttempt && !isViewFeedback && !isLti && !isUngradedWidget) return;
+        if (!isVideo && !isReading && !isAssignmentStart && !isAttempt && !isViewFeedback && !isLti && !isUngradedWidget && !isProgramming) return;
 
         isRunning = true;
 
@@ -354,6 +355,23 @@
                 }
             } else if (isUngradedWidget) {
                 createToast('🧩 Ungraded Widget detected.');
+                await sleep(1500);
+
+                const markCompleteBtn = Array.from(document.querySelectorAll('button, [role="button"]'))
+                    .find(b => {
+                        const t = (b.textContent || '').trim().toLowerCase();
+                        return t === 'mark as completed' || t === 'mark as complete';
+                    });
+
+                if (markCompleteBtn && !markCompleteBtn.disabled) {
+                    markCompleteBtn.click();
+                    createToast('✅ Marked as complete.');
+                    await sleep(1000);
+                } else {
+                    createToast('Already complete or no button found.');
+                }
+            } else if (isProgramming) {
+                createToast('💻 Programming assignment detected.');
                 await sleep(1500);
 
                 const markCompleteBtn = Array.from(document.querySelectorAll('button, [role="button"]'))
@@ -434,7 +452,7 @@
                 await sleep(2000);
             }
 
-            if (isVideo || isReading || isViewFeedback || isLti || isUngradedWidget) {
+            if (isVideo || isReading || isViewFeedback || isLti || isUngradedWidget || isProgramming) {
                 const start = Date.now();
                 let nextBtn = null;
                 while (Date.now() - start < 4000) {
