@@ -74,7 +74,7 @@
 
     function isAssignmentPage() {
         const type = getPageType();
-        if (['quiz', 'assignment', 'peer', 'programming'].includes(type)) return true;
+        if (['quiz', 'assignment', 'peer'].includes(type)) return true;
         const path = location.pathname.toLowerCase();
         if (path.includes('/graded') || path.includes('/quiz') || path.includes('/exam') || path.includes('/assignment')) return true;
         return false;
