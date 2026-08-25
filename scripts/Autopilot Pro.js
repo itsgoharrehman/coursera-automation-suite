@@ -50,7 +50,10 @@
         if (!key) return 'groq';
         if (key.startsWith('nvapi-')) return 'nvidia';
         if (key.startsWith('gsk_')) return 'groq';
-        return selectedProvider !== 'auto' ? selectedProvider : 'groq';
+        if (selectedModel && (selectedModel.startsWith('meta/') || selectedModel.startsWith('deepseek') || selectedModel.startsWith('mistral'))) {
+            return 'nvidia';
+        }
+        return 'groq';
     }
 
     function getEndpointForProvider(provider) {
@@ -105,33 +108,37 @@
         const url = location.href.toLowerCase();
         if (url.includes('/attempt') && !url.includes('/view-feedback')) return false;
 
+        // 1. If there is an active actionable button on the page, it is NOT completed
+        if (findMarkComplete() !== null) return false;
+        if (findBtnPartial(['launch app', 'launch lab', 'start lab', 'learn side-by-side', 'open workspace']) !== null) return false;
+
+        // 2. If a video is present and not near the end, it is NOT completed
+        const video = document.querySelector('video');
+        if (video && video.duration > 0 && video.currentTime < video.duration - 2) {
+            return false;
+        }
+
+        // 3. Strict check on active sidebar navigation item
         const activeNavItems = document.querySelectorAll('.rc-ItemRow.active, .rc-NavigationDrawerItem.active, [aria-current="page"], [aria-current="step"], [aria-current="true"]');
         for (const item of activeNavItems) {
-            const svgs = item.querySelectorAll('svg, [data-testid*="completed"], [class*="completed"], [aria-label*="Completed"], [aria-label*="completed"]');
+            const svgs = item.querySelectorAll('svg, [data-testid*="completed"], [aria-label*="Completed"], [aria-label*="completed"]');
             for (const s of svgs) {
-                const aria = (s.getAttribute('aria-label') || s.getAttribute('data-testid') || '').toLowerCase();
-                const cls = (s.getAttribute('class') || '').toLowerCase();
-                if (aria.includes('completed') || aria.includes('passed') || aria.includes('check') || cls.includes('completed') || cls.includes('check')) {
+                const aria = (s.getAttribute('aria-label') || '').trim().toLowerCase();
+                const testId = (s.getAttribute('data-testid') || '').toLowerCase();
+                if (aria === 'completed' || aria === 'passed' || testId === 'completed-icon' || testId === 'item-completed') {
                     return true;
                 }
             }
         }
 
+        // 4. Strict check for confirmed "Completed" status button on main reading/lab page
         const main = document.querySelector('main, [role="main"]') || document.body;
         if (!main) return false;
-
-        const completedBadges = main.querySelectorAll('[data-test*="completed"], [data-testid*="completed"], [data-test*="grade"], [data-testid*="grade"], [class*="completedBadge"], [class*="CompletedBadge"]');
-        for (const b of completedBadges) {
-            if (isElementVisible(b)) {
-                const t = (b.textContent || '').trim().toLowerCase();
-                if (t.includes('completed') || t.includes('100%') || t.includes('passed') || t.includes('grade:')) return true;
-            }
-        }
 
         const btns = main.querySelectorAll('button, [role="button"], div[class*="Button"]');
         for (const b of btns) {
             if (b.closest('#tm-dock-host, #tm-toast')) continue;
-            const t = (b.textContent || b.getAttribute('aria-label') || '').trim().toLowerCase();
+            const t = (b.textContent || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().toLowerCase();
             if (t === 'completed' || t === 'marked as completed' || t === 'marked complete' || t === 'completed ✓') {
                 if (isElementVisible(b)) return true;
             }
@@ -722,9 +729,20 @@ Strict Rules:
                 const submitBtn = findBtnPartial(['submit assignment', 'submit quiz', 'submit']);
                 if (submitBtn) {
                     submitBtn.click();
-                    await sleep(2000);
-                    const confirmBtn = findBtnPartial(['yes', 'confirm', 'submit anyway']);
-                    if (confirmBtn) confirmBtn.click();
+                    for (let j = 0; j < 15; j++) {
+                        const confirmBtn = findBtnPartial(['yes', 'confirm', 'submit anyway']);
+                        if (confirmBtn) { confirmBtn.click(); break; }
+                        await sleep(150);
+                    }
+
+                    for (let w = 0; w < 40; w++) {
+                        await sleep(300);
+                        const nextBtn = findNextItem();
+                        if (nextBtn) {
+                            nextBtn.click();
+                            break;
+                        }
+                    }
                 }
             }
         } catch (err) {
@@ -740,7 +758,7 @@ Strict Rules:
         if (isAuto && doneUrls.has(location.href)) return;
         if (isAuto && isAssignmentPage()) return;
 
-        if (isItemAlreadyCompleted()) {
+        if (isItemAlreadyCompleted() && isAssignmentPage()) {
             const next = findNextItem();
             if (next) {
                 next.click();

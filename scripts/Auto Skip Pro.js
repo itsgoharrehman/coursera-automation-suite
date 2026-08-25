@@ -71,7 +71,10 @@
         if (!key) return 'groq';
         if (key.startsWith('nvapi-')) return 'nvidia';
         if (key.startsWith('gsk_')) return 'groq';
-        return selectedProvider !== 'auto' ? selectedProvider : 'groq';
+        if (selectedModel && (selectedModel.startsWith('meta/') || selectedModel.startsWith('deepseek') || selectedModel.startsWith('mistral'))) {
+            return 'nvidia';
+        }
+        return 'groq';
     }
 
     function getEndpointForProvider(provider) {
@@ -529,35 +532,38 @@
             return false;
         }
 
+        // 1. If there is an active actionable button on the page, it is NOT completed
+        if (findActiveMarkCompleteButton() !== null) return false;
+        if (findLaunchButton() !== null) return false;
+        if (findSideBySideButton() !== null) return false;
+
+        // 2. If a video is present and not near the end, it is NOT completed
+        const video = document.querySelector('video');
+        if (video && video.duration > 0 && video.currentTime < video.duration - 2) {
+            return false;
+        }
+
+        // 3. Strict check on active sidebar navigation item
         const activeNavItems = document.querySelectorAll('.rc-ItemRow.active, .rc-NavigationDrawerItem.active, [aria-current="page"], [aria-current="step"], [aria-current="true"]');
         for (const item of activeNavItems) {
-            const svgs = item.querySelectorAll('svg, [data-testid*="completed"], [class*="completed"], [aria-label*="Completed"], [aria-label*="completed"]');
+            const svgs = item.querySelectorAll('svg, [data-testid*="completed"], [aria-label*="Completed"], [aria-label*="completed"]');
             for (const s of svgs) {
-                const aria = (s.getAttribute('aria-label') || s.getAttribute('data-testid') || '').toLowerCase();
-                const cls = (s.getAttribute('class') || '').toLowerCase();
-                if (aria.includes('completed') || aria.includes('passed') || aria.includes('check') || cls.includes('completed') || cls.includes('check')) {
+                const aria = (s.getAttribute('aria-label') || '').trim().toLowerCase();
+                const testId = (s.getAttribute('data-testid') || '').toLowerCase();
+                if (aria === 'completed' || aria === 'passed' || testId === 'completed-icon' || testId === 'item-completed') {
                     return true;
                 }
             }
         }
 
+        // 4. Strict check for confirmed "Completed" status button on main reading/lab page
         const main = document.querySelector('main, [role="main"]') || document.body;
         if (!main) return false;
-
-        const completedBadges = main.querySelectorAll('[data-test*="completed"], [data-testid*="completed"], [data-test*="grade"], [data-testid*="grade"], [class*="completedBadge"], [class*="CompletedBadge"]');
-        for (const b of completedBadges) {
-            if (isVisible(b)) {
-                const t = (b.textContent || '').trim().toLowerCase();
-                if (t.includes('completed') || t.includes('100%') || t.includes('passed') || t.includes('grade:')) {
-                    return true;
-                }
-            }
-        }
 
         const btns = main.querySelectorAll('button, [role="button"], div[class*="Button"]');
         for (const b of btns) {
             if (b.closest('#cas-widget-host, #tm-toast, #cas-settings-host')) continue;
-            const t = (b.textContent || b.getAttribute('aria-label') || '').trim().toLowerCase();
+            const t = (b.textContent || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().toLowerCase();
             if (t === 'completed' || t === 'marked as completed' || t === 'marked complete' || t === 'completed ✓') {
                 if (isVisible(b)) return true;
             }
@@ -1187,11 +1193,10 @@ Strict Rules:
 
         if (submitBtn) {
             smartClick(submitBtn);
-            createToast('Clicked Submit. Confirming...');
-            await sleep(2000);
+            createToast('Submitting quiz...');
 
             let modalSubmitBtn = null;
-            for (let j = 0; j < 6; j++) {
+            for (let j = 0; j < 15; j++) {
                 modalSubmitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).find(b => {
                     if (b.closest('#cas-widget-host, #cas-settings-host') || b.disabled) return false;
                     const t = (b.textContent || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
@@ -1199,26 +1204,35 @@ Strict Rules:
                     return (t === 'submit' || t.startsWith('submit ') || t === 'yes' || t === 'confirm' || t === 'submit anyway') && b !== submitBtn && isVisible(b);
                 });
                 if (modalSubmitBtn) break;
-                await sleep(500);
+                await sleep(150);
             }
 
             if (modalSubmitBtn) {
                 smartClick(modalSubmitBtn);
-                createToast('Submission confirmed.');
+                createToast('Submission confirmed. Advancing...');
             }
 
-            createToast('Waiting for feedback/grade...');
-            let feedbackWait = 0;
-            while (feedbackWait < 15) {
-                await sleep(500);
-                if (location.href.toLowerCase().includes('/view-feedback') || isItemAlreadyCompleted()) {
-                    createToast('Grade confirmed. Next item...');
-                    await sleep(1500);
-                    const nextBtn = await waitForNextButton(5000);
-                    if (nextBtn) smartClick(nextBtn);
-                    break;
+            for (let waitCount = 0; waitCount < 40; waitCount++) {
+                await sleep(300);
+
+                const nextBtn = findNextButton();
+                if (nextBtn) {
+                    createToast('Advancing to next item...');
+                    smartClick(nextBtn);
+                    return;
                 }
-                feedbackWait++;
+
+                const continueBtn = Array.from(document.querySelectorAll('button, a, [role="button"]')).find(b => {
+                    if (b.closest('#cas-widget-host, #cas-settings-host') || b.disabled) return false;
+                    const t = (b.textContent || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                    return (t === 'view feedback' || t === 'continue' || t === 'go to next item' || t === 'next item' || t === 'next') && isVisible(b);
+                });
+
+                if (continueBtn) {
+                    createToast('Advancing to next item...');
+                    smartClick(continueBtn);
+                    return;
+                }
             }
         }
     }
@@ -1379,16 +1393,6 @@ Strict Rules:
 
         if (!isVideo && !isReading && !isAssignmentStart && !isAttempt && !isViewFeedback && !isLab && !isDialogue) return;
 
-        if (!isAttempt && isItemAlreadyCompleted()) {
-            createToast('Item already completed. Next item...');
-            await sleep(1000);
-            const nextBtn = await waitForNextButton(5000);
-            if (nextBtn) {
-                smartClick(nextBtn);
-                return;
-            }
-        }
-
         isRunning = true;
         currentProcessingUrl = thisUrl;
 
@@ -1548,6 +1552,16 @@ Strict Rules:
                 }
 
             } else if (isAssignmentStart) {
+                if (isItemAlreadyCompleted()) {
+                    createToast('Assignment already passed. Next item...');
+                    await sleep(1000);
+                    const nextBtn = await waitForNextButton(5000);
+                    if (nextBtn) {
+                        smartClick(nextBtn);
+                        return;
+                    }
+                }
+
                 let startBtn = null;
                 for (let i = 0; i < 10; i++) {
                     startBtn = Array.from(document.querySelectorAll('button, a, [role="button"]')).find(b => {
@@ -1611,29 +1625,25 @@ Strict Rules:
             }
             .modal-card {
                 background: #0f172a; color: #f8fafc; border: 1px solid #334155;
-                border-radius: 12px; width: 500px; max-width: 92vw; max-height: 90vh;
-                overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 14px;
+                border-radius: 12px; width: 460px; max-width: 92vw; max-height: 90vh;
+                overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 14px;
                 box-shadow: 0 25px 50px rgba(0, 0, 0, 0.7);
             }
             .header { display: flex; justify-content: space-between; align-items: center; }
-            .header h3 { font-size: 15px; font-weight: 600; color: #38bdf8; letter-spacing: 0.3px; }
-            .close-btn { background: transparent; border: none; color: #94a3b8; font-size: 18px; cursor: pointer; padding: 4px; line-height: 1; }
+            .header h3 { font-size: 15px; font-weight: 600; color: #38bdf8; }
+            .close-btn { background: transparent; border: none; color: #94a3b8; font-size: 18px; cursor: pointer; padding: 2px 6px; line-height: 1; }
             .close-btn:hover { color: #f8fafc; }
             .notice { font-size: 12px; color: #fbbf24; background: #451a03; padding: 8px 12px; border-radius: 6px; border: 1px solid #78350f; }
-            .label-row { display: flex; justify-content: space-between; align-items: center; }
-            label { font-size: 12px; font-weight: 600; color: #cbd5e1; }
-            .btn-group { display: flex; gap: 6px; }
-            .action-btn { background: #1e293b; border: 1px solid #334155; color: #38bdf8; border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; font-weight: 500; }
-            .action-btn:hover { background: #334155; }
-            textarea, input, select {
+            label { font-size: 12px; font-weight: 600; color: #cbd5e1; display: block; margin-bottom: 4px; }
+            textarea, select {
                 width: 100%; background: #1e293b; color: #f8fafc; border: 1px solid #334155;
-                border-radius: 6px; padding: 10px; font-size: 13px; outline: none; transition: border 0.15s;
+                border-radius: 6px; padding: 9px 11px; font-size: 13px; outline: none; transition: border 0.15s;
             }
-            textarea:focus, input:focus, select:focus { border-color: #0284c7; }
-            textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; resize: vertical; min-height: 75px; font-size: 12px; }
-            .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cbd5e1; cursor: pointer; }
+            textarea:focus, select:focus { border-color: #0284c7; }
+            textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; resize: vertical; min-height: 80px; font-size: 12px; }
+            .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cbd5e1; cursor: pointer; user-select: none; }
             .checkbox-row input { width: auto; cursor: pointer; }
-            .footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+            .footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
             .save-btn { background: #0284c7; color: #fff; border: none; border-radius: 6px; padding: 8px 18px; font-weight: 600; font-size: 13px; cursor: pointer; }
             .save-btn:hover { background: #0369a1; }
         `;
@@ -1649,7 +1659,7 @@ Strict Rules:
         const header = document.createElement('div');
         header.className = 'header';
         const title = document.createElement('h3');
-        title.textContent = 'Settings & API Keys';
+        title.textContent = 'Settings';
         const closeX = document.createElement('button');
         closeX.className = 'close-btn';
         closeX.textContent = '✕';
@@ -1665,12 +1675,13 @@ Strict Rules:
             card.appendChild(notice);
         }
 
-        // Provider
+        // 1. Provider / Router Select
+        const provGroup = document.createElement('div');
         const provLabel = document.createElement('label');
-        provLabel.textContent = 'AI Provider:';
+        provLabel.textContent = 'AI Provider / Router:';
         const provSelect = document.createElement('select');
         [
-            { id: 'auto', name: 'Auto-Detect (Groq gsk_... or NVIDIA nvapi-...)' },
+            { id: 'auto', name: 'Auto-Detect (Based on Key prefix)' },
             { id: 'groq', name: 'Groq Cloud' },
             { id: 'nvidia', name: 'NVIDIA NIM' }
         ].forEach(p => {
@@ -1680,134 +1691,115 @@ Strict Rules:
             if (p.id === selectedProvider) opt.selected = true;
             provSelect.appendChild(opt);
         });
-        card.appendChild(provLabel);
-        card.appendChild(provSelect);
+        provGroup.appendChild(provLabel);
+        provGroup.appendChild(provSelect);
+        card.appendChild(provGroup);
 
-        // Keys Row
-        const keyLabelRow = document.createElement('div');
-        keyLabelRow.className = 'label-row';
+        // 2. Keys Row
+        const keyGroup = document.createElement('div');
         const keyLabel = document.createElement('label');
-        keyLabel.textContent = 'API Keys (Groq or NVIDIA NIM):';
-        const btnGroup = document.createElement('div');
-        btnGroup.className = 'btn-group';
-
-        const pasteBtn = document.createElement('button');
-        pasteBtn.className = 'action-btn';
-        pasteBtn.textContent = 'Paste Clipboard';
-
-        const promptBtn = document.createElement('button');
-        promptBtn.className = 'action-btn';
-        promptBtn.textContent = 'Type via Prompt';
-
-        btnGroup.appendChild(pasteBtn);
-        btnGroup.appendChild(promptBtn);
-        keyLabelRow.appendChild(keyLabel);
-        keyLabelRow.appendChild(btnGroup);
-        card.appendChild(keyLabelRow);
-
+        keyLabel.textContent = 'API Key(s) (Groq or NVIDIA NIM):';
         const keyTextarea = document.createElement('textarea');
         keyTextarea.rows = 3;
-        keyTextarea.placeholder = 'Paste gsk_... or nvapi-... here\n(Multiple keys supported: one per line or comma-separated)';
+        keyTextarea.placeholder = 'Paste Groq (gsk_...) or NVIDIA (nvapi-...) API key(s) here';
         keyTextarea.value = rawAiKeys;
-        card.appendChild(keyTextarea);
+        keyGroup.appendChild(keyLabel);
+        keyGroup.appendChild(keyTextarea);
+        card.appendChild(keyGroup);
 
-        pasteBtn.onclick = async () => {
-            try {
-                const text = await navigator.clipboard.readText();
-                if (text) {
-                    keyTextarea.value = text.trim();
-                    createToast('Pasted from clipboard.');
-                }
-            } catch (e) {
-                const manual = prompt('Paste your API key:', keyTextarea.value);
-                if (manual !== null) keyTextarea.value = manual.trim();
-            }
-        };
-
-        promptBtn.onclick = () => {
-            const manual = prompt('Enter your Groq (gsk_...) or NVIDIA (nvapi-...) API key(s):', keyTextarea.value);
-            if (manual !== null) keyTextarea.value = manual.trim();
-        };
-
-        // Model Row
+        // 3. Model Dropdown Row with Dynamic Live Fetch
+        const modelGroup = document.createElement('div');
         const modelLabelRow = document.createElement('div');
-        modelLabelRow.className = 'label-row';
-        const modelLabel = document.createElement('label');
-        modelLabel.textContent = 'AI Model Name:';
+        modelLabelRow.style.display = 'flex';
+        modelLabelRow.style.justifyContent = 'space-between';
+        modelLabelRow.style.alignItems = 'center';
+        modelLabelRow.style.marginBottom = '4px';
 
-        const refreshBtn = document.createElement('button');
-        refreshBtn.className = 'action-btn';
-        refreshBtn.textContent = 'Fetch Live Models';
+        const modelLabel = document.createElement('label');
+        modelLabel.textContent = 'AI Model:';
+        modelLabel.style.marginBottom = '0';
+
+        const fetchBtn = document.createElement('button');
+        fetchBtn.textContent = '🔄 Fetch Live Models';
+        fetchBtn.style.background = '#1e293b';
+        fetchBtn.style.border = '1px solid #334155';
+        fetchBtn.style.color = '#38bdf8';
+        fetchBtn.style.borderRadius = '4px';
+        fetchBtn.style.padding = '2px 8px';
+        fetchBtn.style.fontSize = '11px';
+        fetchBtn.style.cursor = 'pointer';
 
         modelLabelRow.appendChild(modelLabel);
-        modelLabelRow.appendChild(refreshBtn);
-        card.appendChild(modelLabelRow);
+        modelLabelRow.appendChild(fetchBtn);
+        modelGroup.appendChild(modelLabelRow);
 
-        const modelInput = document.createElement('input');
-        modelInput.setAttribute('list', 'cas-shadow-models');
-        modelInput.value = selectedModel;
-        modelInput.placeholder = 'openai/gpt-oss-120b or meta/llama-3.3-70b-instruct';
+        const modelSelect = document.createElement('select');
 
-        const dataList = document.createElement('datalist');
-        dataList.id = 'cas-shadow-models';
-
-        function populateDataList(models) {
-            dataList.innerHTML = '';
+        function populateModels(models) {
+            modelSelect.innerHTML = '';
             models.forEach(m => {
                 const opt = document.createElement('option');
                 opt.value = typeof m === 'string' ? m : m.id;
-                opt.label = typeof m === 'string' ? m : m.name;
-                dataList.appendChild(opt);
+                opt.textContent = typeof m === 'string' ? m : m.name;
+                if (opt.value === selectedModel) opt.selected = true;
+                modelSelect.appendChild(opt);
             });
         }
 
-        const presets = selectedProvider === 'nvidia' ? MODEL_CATALOG.nvidia : selectedProvider === 'groq' ? MODEL_CATALOG.groq : [...MODEL_CATALOG.groq, ...MODEL_CATALOG.nvidia];
-        populateDataList(presets);
+        const initialList = selectedProvider === 'nvidia' ? MODEL_CATALOG.nvidia : selectedProvider === 'groq' ? MODEL_CATALOG.groq : [...MODEL_CATALOG.groq, ...MODEL_CATALOG.nvidia];
+        populateModels(initialList);
 
-        card.appendChild(modelInput);
-        card.appendChild(dataList);
-
-        refreshBtn.onclick = async () => {
+        async function triggerLiveFetch() {
             const firstKey = parseApiKeys(keyTextarea.value)[0];
-            if (!firstKey) {
-                createToast('Enter an API key first to fetch models.');
-                return;
-            }
-            refreshBtn.textContent = 'Fetching...';
+            if (!firstKey) return;
+            fetchBtn.textContent = '⏳ Fetching...';
             try {
-                const liveList = await fetchLiveModels(firstKey, provSelect.value);
-                populateDataList(liveList);
-                createToast(`Fetched ${liveList.length} live models.`);
-                if (liveList.length > 0 && !liveList.includes(modelInput.value)) {
-                    modelInput.value = liveList[0];
+                const prov = provSelect.value === 'auto' ? detectProviderForKey(firstKey) : provSelect.value;
+                const liveModels = await fetchLiveModels(firstKey, prov);
+                if (liveModels && liveModels.length > 0) {
+                    populateModels(liveModels);
+                    createToast(`Loaded ${liveModels.length} live models from ${prov.toUpperCase()}`);
                 }
             } catch (err) {
-                createToast('Error fetching models: ' + err.message);
+                console.warn('[Auto Skip Pro] Live fetch error:', err);
+                createToast('Could not fetch live models: ' + err.message);
             } finally {
-                refreshBtn.textContent = 'Fetch Live Models';
+                fetchBtn.textContent = '🔄 Fetch Live Models';
             }
+        }
+
+        fetchBtn.onclick = (e) => {
+            e.preventDefault();
+            triggerLiveFetch();
         };
 
         provSelect.onchange = () => {
             const p = provSelect.value;
             const cur = p === 'nvidia' ? MODEL_CATALOG.nvidia : p === 'groq' ? MODEL_CATALOG.groq : [...MODEL_CATALOG.groq, ...MODEL_CATALOG.nvidia];
-            populateDataList(cur);
-            modelInput.value = getDefaultModelForProvider(p);
+            populateModels(cur);
+            triggerLiveFetch();
         };
 
-        // Auto submit checkbox
+        keyTextarea.onchange = () => {
+            triggerLiveFetch();
+        };
+
+        modelGroup.appendChild(modelSelect);
+        card.appendChild(modelGroup);
+
+        // 4. Auto submit checkbox
         const submitWrap = document.createElement('label');
         submitWrap.className = 'checkbox-row';
         const submitCb = document.createElement('input');
         submitCb.type = 'checkbox';
         submitCb.checked = autoSubmitQuiz;
         const submitText = document.createElement('span');
-        submitText.textContent = 'Auto Submit & Proceed after AI fills answers';
+        submitText.textContent = 'Auto Submit & Proceed after AI fills quiz';
         submitWrap.appendChild(submitCb);
         submitWrap.appendChild(submitText);
         card.appendChild(submitWrap);
 
-        // Footer
+        // 5. Footer
         const footer = document.createElement('div');
         footer.className = 'footer';
         const saveBtn = document.createElement('button');
@@ -1816,7 +1808,7 @@ Strict Rules:
         saveBtn.onclick = () => {
             rawAiKeys = keyTextarea.value.trim();
             selectedProvider = provSelect.value;
-            selectedModel = modelInput.value.trim() || getDefaultModelForProvider(selectedProvider);
+            selectedModel = modelSelect.value;
             autoSubmitQuiz = submitCb.checked;
 
             localStorage.setItem('coursera_ai_keys', rawAiKeys);
@@ -1826,7 +1818,7 @@ Strict Rules:
             localStorage.setItem('coursera_auto_submit_quiz', autoSubmitQuiz ? 'true' : 'false');
 
             const count = parseApiKeys(rawAiKeys).length;
-            createToast(`Settings saved (${count} key(s), model: ${selectedModel})`);
+            createToast(`Saved (${count} key(s), ${selectedProvider.toUpperCase()}, ${selectedModel})`);
             host.remove();
         };
 
