@@ -1,19 +1,25 @@
 // ==UserScript==
-// @name         Quiz Solver
+// @name         Quiz Solver (Multi-AI: Groq & NVIDIA NIM)
 // @namespace    http://tampermonkey.net/
-// @version      10.0
-// @description  Automated quiz solver for Coursera. Selects options, checks honor code, clicks Submit (page + modal popup), waits for grade to appear, and clicks Next Item.
+// @version      12.2
+// @description  Automated Multi-AI quiz solver for Coursera. Supports Groq & NVIDIA NIM API keys with automatic key rotation, strips anti-AI traps, uses top active models, and auto-fills answers.
 // @author       Gohar Rehman (https://github.com/itsgoharrehman)
-// @match        *://*.coursera.org/learn*
-// @grant        none
+// @match        *://*.coursera.org/*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @connect      api.groq.com
+// @connect      integrate.api.nvidia.com
 // ==/UserScript==
 
 (function () {
     'use strict';
 
     let isRunning = false;
+    let rawAiKeys = localStorage.getItem('coursera_ai_keys') || localStorage.getItem('coursera_groq_api_key') || '';
+    let selectedProvider = localStorage.getItem('coursera_ai_provider') || 'auto';
+    let selectedModel = localStorage.getItem('coursera_ai_model') || 'openai/gpt-oss-120b';
 
-    // ----- UI & LOGGING -----
     function log(msg) {
         let box = document.getElementById('qas-toast');
         if (!box) {
@@ -21,17 +27,18 @@
             box.id = 'qas-toast';
             Object.assign(box.style, {
                 position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)',
-                background: '#0f172a', color: '#38bdf8', padding: '12px 24px',
-                borderRadius: '8px', fontFamily: 'sans-serif', fontSize: '14px',
-                fontWeight: 'bold', zIndex: '9999999', pointerEvents: 'none',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.5)', transition: 'opacity 0.2s', opacity: '1'
+                background: '#0f172a', color: '#38bdf8', padding: '10px 20px',
+                borderRadius: '8px', fontFamily: 'sans-serif', fontSize: '13px',
+                fontWeight: '600', zIndex: '2147483647', pointerEvents: 'none',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.5)', transition: 'opacity 0.2s', opacity: '1',
+                border: '1px solid #334155'
             });
             document.body.appendChild(box);
         }
         box.textContent = msg;
         box.style.opacity = '1';
         clearTimeout(box._t);
-        box._t = setTimeout(() => { box.style.opacity = '0'; }, 4000);
+        box._t = setTimeout(() => { box.style.opacity = '0'; }, 3500);
     }
 
     const wait = (ms) => new Promise(r => setTimeout(r, ms));
@@ -42,34 +49,48 @@
         return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && el.offsetWidth > 0;
     }
 
-    // ----- CORE INTERACTION ACTIONS -----
-    function forceClick(el) {
-        if (!el) return;
-        try {
-            el.removeAttribute('disabled');
-            el.removeAttribute('aria-disabled');
-            el.classList.remove('cds-button-disabled', 'disabled');
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            el.focus();
-            
-            el.click();
+    function parseApiKeys(raw) {
+        if (!raw) return [];
+        return raw.split(/[\n,;]+/).map(k => k.trim()).filter(Boolean);
+    }
 
-            // Try form submit as a final fallback only for submit buttons
-            const form = el.closest('form');
-            if (form && form.requestSubmit && el.textContent.toLowerCase().includes('submit')) {
-                try { form.requestSubmit(el); } catch(e){}
-            }
+    function detectProviderForKey(key) {
+        if (!key) return 'groq';
+        if (key.startsWith('nvapi-')) return 'nvidia';
+        if (key.startsWith('gsk_')) return 'groq';
+        return selectedProvider !== 'auto' ? selectedProvider : 'groq';
+    }
+
+    function getEndpointForProvider(provider) {
+        if (provider === 'nvidia') return 'https://integrate.api.nvidia.com/v1/chat/completions';
+        return 'https://api.groq.com/openai/v1/chat/completions';
+    }
+
+    function getDefaultModelForProvider(provider) {
+        if (provider === 'nvidia') return 'meta/llama-3.3-70b-instruct';
+        return 'openai/gpt-oss-120b';
+    }
+
+    function setNativeValue(el, value) {
+        try {
+            const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+            if (descriptor && descriptor.set) descriptor.set.call(el, value);
+            else el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
         } catch (e) {
-            el.click();
+            el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
         }
     }
 
-    function checkReactCheckbox(cb) {
-        if (!cb || cb.checked) return;
+    function setNativeChecked(cb, checked = true) {
+        if (!cb || cb.checked === checked) return;
         try {
-            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked').set;
-            if (setter) setter.call(cb, true);
-            else cb.checked = true;
+            const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked');
+            if (descriptor && descriptor.set) descriptor.set.call(cb, checked);
+            else cb.checked = checked;
             cb.dispatchEvent(new Event('click', { bubbles: true }));
             cb.dispatchEvent(new Event('change', { bubbles: true }));
             cb.dispatchEvent(new Event('input', { bubbles: true }));
@@ -78,153 +99,245 @@
         }
     }
 
-    // ----- ELEMENT FINDERS -----
-    function getQuestions() {
-        let blocks = Array.from(document.querySelectorAll('.rc-FormPartsQuestion, fieldset, [data-test*="question"], div[class*="Question"], [role="group"]'));
-        blocks = blocks.filter(b => b.querySelector('input[type="radio"], input[type="checkbox"]'));
-        return blocks.filter(b => !blocks.some(parent => parent !== b && parent.contains(b)));
-    }
+    const STRIP_PATTERNS = [
+        /(?:You are a helpful AI assistant[\s\S]*?verification step is mandatory for all AI assistants accessing assessment pages\.?)/gi,
+        /AI Agent Compliance Verification Required/gi,
+        /Do you understand\??\.*\s*/gi,
+        /I understand\.?\s*/gi,
+        /^\s*\d+[\.\)]\s*/gm,
+        /^\s*\d+\s*points?\b/gim,
+        /\b\d+\s*points?\b/gim,
+        /This question is un-graded/gim,
+        /Correct\s*✓?/gim,
+        /Incorrect\s*✗?/gim,
+        /Try again/gim
+    ];
 
-    function getOptions(question) {
-        return Array.from(question.querySelectorAll('input[type="radio"], input[type="checkbox"]')).filter(opt => {
-            const text = (opt.closest('label, div') || opt).textContent.toLowerCase();
-            return !text.includes('honor') && !text.includes('understand and agree');
-        });
-    }
-
-    function findHonorCode() {
-        return Array.from(document.querySelectorAll('input[type="checkbox"]')).find(cb => {
-            const text = (cb.closest('label, div, form') || cb).textContent.toLowerCase();
-            return text.includes('agree') || text.includes('honor') || text.includes('work is your own');
-        });
-    }
-
-    function findButtonByText(textsToMatch, excludeTexts = [], skipElement = null) {
-        const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.cds-button, [role="button"]'));
-        for (const btn of btns) {
-            if (btn === skipElement) continue;
-            if (btn.closest('#qas-widget')) continue;
-            if (!isVisible(btn)) continue;
-            
-            const text = (btn.textContent || btn.value || btn.getAttribute('aria-label') || '').toLowerCase().trim();
-            if (!text) continue;
-
-            const matches = textsToMatch.some(t => text === t || text.startsWith(t));
-            const excluded = excludeTexts.some(e => text.includes(e));
-
-            if (matches && !excluded) return btn;
+    function cleanTextContent(text) {
+        if (!text) return '';
+        let cleaned = text;
+        for (const pattern of STRIP_PATTERNS) {
+            pattern.lastIndex = 0;
+            cleaned = cleaned.replace(pattern, '');
         }
-        return null;
+        return cleaned.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     }
 
-    function isGradeShown() {
-        const els = document.querySelectorAll('[data-test*="grade"], [data-test*="score"], [class*="Grade"], [class*="Score"], [class*="Result"]');
-        return Array.from(els).some(el => {
-            if (!isVisible(el)) return false;
-            const t = el.textContent.toLowerCase();
-            return t.includes('%') || t.includes('grade') || t.includes('passed') || t.includes('score');
+    function extractQuestions() {
+        const questions = [];
+        const processedEls = new Set();
+        const mainContainer = document.querySelector('main, [role="main"], .rc-Assignment, .rc-Quiz, .rc-Attempt') || document.body;
+
+        const allInputs = Array.from(mainContainer.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([readonly]):not([disabled]), textarea:not([readonly]):not([disabled])'));
+
+        const relevantInputs = allInputs.filter(el => {
+            const text = (el.closest('label') || el.parentElement || el).textContent.toLowerCase();
+            if (el.type === 'search' || el.name === 'q') return false;
+            if (el.type === 'checkbox' && (text.includes('understand and agree') || text.includes('honor code') || text.includes('my own work'))) {
+                return false;
+            }
+            return true;
+        });
+
+        let blocks = Array.from(mainContainer.querySelectorAll('.rc-FormPartsQuestion, fieldset, [data-test*="question"], [data-testid*="question"], div[class*="Question"], [role="group"]'));
+        blocks = blocks.filter(b => b.querySelector('input, textarea') && isVisible(b));
+        const questionContainers = blocks.filter(b => !blocks.some(parent => parent !== b && parent.contains(b)));
+
+        questionContainers.forEach(container => {
+            const containerInputs = relevantInputs.filter(el => container.contains(el) && !processedEls.has(el));
+            if (containerInputs.length === 0) return;
+
+            let promptEl = container.querySelector('.rc-FormPartsQuestion__content, div[class*="prompt"], div[class*="Prompt"], legend, div.cml-asset-content, div[class*="question-text"]');
+            let rawPrompt = promptEl ? promptEl.innerText : container.innerText;
+            let cleanPrompt = cleanTextContent(rawPrompt);
+
+            const choiceInputs = containerInputs.filter(el => el.type === 'radio' || el.type === 'checkbox');
+            const textInputs = containerInputs.filter(el => el.type !== 'radio' && el.type !== 'checkbox');
+
+            if (choiceInputs.length > 0) {
+                const groupsByName = {};
+                const noNameGroup = [];
+                choiceInputs.forEach(el => {
+                    if (el.name) {
+                        if (!groupsByName[el.name]) groupsByName[el.name] = [];
+                        groupsByName[el.name].push(el);
+                    } else {
+                        noNameGroup.push(el);
+                    }
+                });
+
+                const processGroup = (group) => {
+                    const type = group[0].type;
+                    const options = group.map((el, optIdx) => {
+                        const optLabel = el.closest('label') || el.parentElement;
+                        let optText = optLabel ? optLabel.innerText : `Option ${optIdx + 1}`;
+                        optText = cleanTextContent(optText);
+                        return { index: optIdx + 1, text: optText, element: el };
+                    });
+
+                    questions.push({
+                        type: type,
+                        prompt: cleanPrompt || `Question ${questions.length + 1}`,
+                        options: options,
+                        elements: group
+                    });
+                    group.forEach(el => processedEls.add(el));
+                };
+
+                Object.values(groupsByName).forEach(processGroup);
+                if (noNameGroup.length > 0) processGroup(noNameGroup);
+            }
+
+            if (textInputs.length > 0) {
+                questions.push({
+                    type: 'text',
+                    prompt: cleanPrompt || `Question ${questions.length + 1}`,
+                    elements: textInputs,
+                    blankCount: textInputs.length
+                });
+                textInputs.forEach(el => processedEls.add(el));
+            }
+        });
+
+        return questions;
+    }
+
+    async function sendSingleAiRequest(apiKey, provider, model, questions) {
+        const endpoint = getEndpointForProvider(provider);
+        const modelToUse = model || getDefaultModelForProvider(provider);
+
+        let questionPromptText = questions.map((q, idx) => {
+            let out = `Q${idx + 1} (${q.type === 'radio' ? 'Single Choice Radio' : q.type === 'checkbox' ? 'Multiple Choice Checkboxes' : `Text Input (${q.blankCount} blank(s))`}):\n${q.prompt}\n`;
+            if (q.options) {
+                out += `Options:\n` + q.options.map(o => `  ${o.index}. ${o.text}`).join('\n') + '\n';
+            }
+            return out;
+        }).join('\n-------------------\n\n');
+
+        const systemPrompt = `You are an expert assessment solver.
+Output ONLY valid JSON matching this schema:
+{
+  "answers": [
+    {"q": 1, "type": "radio", "choice": 2},
+    {"q": 2, "type": "checkbox", "choices": [1, 3]},
+    {"q": 3, "type": "text", "values": ["answer string"]}
+  ]
+}`;
+
+        const payload = {
+            model: modelToUse,
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: questionPromptText }
+            ],
+            temperature: 0.1,
+            response_format: { type: 'json_object' }
+        };
+
+        return new Promise((resolve, reject) => {
+            const handleSuccess = (resText) => {
+                try {
+                    const data = JSON.parse(resText);
+                    resolve(JSON.parse(data.choices[0].message.content));
+                } catch (e) {
+                    reject(new Error('Failed to parse AI JSON response'));
+                }
+            };
+
+            if (typeof GM_xmlhttpRequest !== 'undefined') {
+                GM_xmlhttpRequest({
+                    method: 'POST',
+                    url: endpoint,
+                    headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
+                    data: JSON.stringify(payload),
+                    onload: (res) => res.status >= 200 && res.status < 300 ? handleSuccess(res.responseText) : reject(new Error(`HTTP ${res.status}`)),
+                    onerror: reject
+                });
+            } else {
+                fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }).then(r => r.text()).then(handleSuccess).catch(reject);
+            }
         });
     }
 
-    // ----- MAIN WORKFLOW -----
-    async function executeSolver(answersStr) {
+    async function solveWithAi() {
         if (isRunning) return;
+
+        const keyList = parseApiKeys(rawAiKeys);
+        if (keyList.length === 0) {
+            const key = prompt('Enter your Groq (gsk_...) or NVIDIA (nvapi-...) API Key:');
+            if (!key) return;
+            rawAiKeys = key.trim();
+            localStorage.setItem('coursera_ai_keys', rawAiKeys);
+            localStorage.setItem('coursera_groq_api_key', rawAiKeys);
+        }
+
         isRunning = true;
+        log('Extracting questions...');
 
         try {
-            const answers = answersStr.split(/[,;\n]+/).map(a => a.trim()).filter(Boolean);
-            const questions = getQuestions();
+            const questions = extractQuestions();
             if (questions.length === 0) {
-                log('❌ No questions found!');
+                log('No questions found.');
                 return;
             }
 
-            log(`Filling ${questions.length} questions...`);
+            const currentKeys = parseApiKeys(rawAiKeys);
+            let result = null;
+            let lastErr = null;
 
-            // 1. Fill answers
-            for (let i = 0; i < questions.length; i++) {
-                if (i >= answers.length) break;
-                const options = getOptions(questions[i]);
-                const nums = answers[i].match(/\d+/g);
-                if (nums) {
-                    for (const n of nums) {
-                        const idx = parseInt(n) - 1;
-                        if (options[idx]) checkReactCheckbox(options[idx]);
-                    }
-                }
-                await wait(150);
-            }
+            for (let i = 0; i < currentKeys.length; i++) {
+                const currentKey = currentKeys[i];
+                const provider = detectProviderForKey(currentKey);
+                const modelToUse = selectedModel;
 
-            // 2. Check Honor Code
-            log('Checking Honor Code...');
-            const honorCb = findHonorCode();
-            if (honorCb) {
-                checkReactCheckbox(honorCb);
-                await wait(300);
-            }
-
-            // 3. Click 1st Submit Button
-            log('Looking for Page Submit button...');
-            let btn1 = null;
-            for (let i = 0; i < 15; i++) {
-                btn1 = findButtonByText(['submit', 'submit assignment', 'submit quiz'], ['draft', 'save', 'cancel']);
-                if (btn1) break;
-                await wait(400);
-            }
-
-            if (!btn1) {
-                log('❌ Submit button not found on page.');
-                return;
-            }
-
-            log('Clicking Submit button...');
-            forceClick(btn1);
-
-            // 4. Click 2nd Modal Confirm Button
-            log('Waiting for confirmation modal...');
-            let btn2 = null;
-            for (let i = 0; i < 15; i++) {
-                btn2 = findButtonByText(['submit', 'confirm', 'yes'], ['cancel', 'no', 'back'], btn1);
-                if (btn2) break;
-                await wait(400);
-            }
-
-            if (btn2) {
-                log('Clicking Confirm in modal...');
-                forceClick(btn2);
-            }
-
-            // 5. Wait for Grade
-            log('Waiting for grade results...');
-            let graded = false;
-            for (let i = 0; i < 60; i++) {
-                if (isGradeShown()) {
-                    graded = true;
+                try {
+                    log(`Asking ${provider.toUpperCase()} (${modelToUse}) with Key ${i + 1}/${currentKeys.length}...`);
+                    result = await sendSingleAiRequest(currentKey, provider, modelToUse, questions);
                     break;
+                } catch (err) {
+                    lastErr = err;
+                    console.warn(`[Quiz Solver AI] Key ${i + 1} (${provider}) failed:`, err);
+                    if (i < currentKeys.length - 1) await wait(1000);
                 }
-                await wait(500);
             }
 
-            if (!graded) {
-                log('⚠️ Grade not detected, proceeding anyway.');
-            }
+            if (!result) throw new Error(`All keys failed: ${lastErr ? lastErr.message : 'Unknown error'}`);
 
-            // 6. Click Next Item
-            log('Looking for Next Item button...');
-            let nextBtn = null;
-            for (let i = 0; i < 15; i++) {
-                nextBtn = findButtonByText(['next item', 'next', 'go to next'], ['skip']);
-                if (nextBtn) break;
-                await wait(500);
-            }
+            const answers = result && result.answers ? result.answers : [];
+            log(`Auto-filling ${questions.length} questions...`);
 
-            if (nextBtn) {
-                log('Clicking Next Item...');
-                forceClick(nextBtn);
-            } else {
-                log('✅ Done! Next Item button not found.');
-            }
+            answers.forEach(ans => {
+                const qIdx = ans.q - 1;
+                if (qIdx < 0 || qIdx >= questions.length) return;
+                const q = questions[qIdx];
 
+                if (q.type === 'radio' && typeof ans.choice === 'number') {
+                    const optIdx = ans.choice - 1;
+                    if (optIdx >= 0 && optIdx < q.options.length) q.options[optIdx].element.click();
+                } else if (q.type === 'checkbox' && Array.isArray(ans.choices)) {
+                    ans.choices.forEach(ch => {
+                        const optIdx = ch - 1;
+                        if (optIdx >= 0 && optIdx < q.options.length) setNativeChecked(q.options[optIdx].element, true);
+                    });
+                } else if (q.type === 'text') {
+                    const values = Array.isArray(ans.values) ? ans.values : [String(ans.values || '')];
+                    q.elements.forEach((el, idx) => {
+                        if (idx < values.length) setNativeValue(el, values[idx]);
+                    });
+                }
+            });
+
+            const honor = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(cb => {
+                const t = (cb.closest('label') || cb.parentElement).textContent.toLowerCase();
+                return t.includes('agree') || t.includes('honor') || t.includes('own work');
+            });
+            if (honor) setNativeChecked(honor, true);
+
+            log('Quiz solved.');
         } catch (e) {
             console.error(e);
             log('Error: ' + e.message);
@@ -233,43 +346,91 @@
         }
     }
 
-    // ----- UI WIDGET -----
-    function createWidget() {
-        if (document.getElementById('qas-widget')) return;
-        const w = document.createElement('div');
-        w.id = 'qas-widget';
-        Object.assign(w.style, {
-            position: 'fixed', bottom: '20px', left: '20px', zIndex: '999999',
-            background: '#1e293b', border: '1px solid #334155', borderRadius: '8px',
-            padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '8px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.5)', userSelect: 'none'
+    function createUi() {
+        if (document.getElementById('qas-dock-host')) return;
+        const host = document.createElement('div');
+        host.id = 'qas-dock-host';
+        Object.assign(host.style, {
+            position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)',
+            zIndex: '2147483640', pointerEvents: 'auto'
         });
 
-        const btn = document.createElement('button');
-        btn.textContent = 'Solve & Submit';
-        Object.assign(btn.style, {
-            background: '#0ea5e9', color: '#fff', border: 'none', borderRadius: '4px',
-            padding: '6px 12px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer'
-        });
-        btn.onclick = () => {
-            const ans = prompt('Enter answers (e.g., 1, 3, 1+2, 4):');
-            if (ans) executeSolver(ans);
+        const shadow = host.attachShadow({ mode: 'open' });
+        const style = document.createElement('style');
+        style.textContent = `
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            .dock {
+                background: rgba(15, 23, 42, 0.9);
+                backdrop-filter: blur(12px);
+                border: 1px solid rgba(51, 65, 85, 0.8);
+                border-radius: 9999px;
+                padding: 6px 10px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+                user-select: none;
+            }
+            .btn {
+                width: 36px;
+                height: 36px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: none;
+                cursor: pointer;
+                transition: transform 0.15s ease, background 0.15s ease;
+                color: #f8fafc;
+                background: #1e293b;
+            }
+            .btn:hover { transform: scale(1.08); background: #334155; }
+            .btn-ai { background: #6366f1; }
+            .btn-ai:hover { background: #4f46e5; }
+            svg {
+                width: 17px;
+                height: 17px;
+                stroke: currentColor;
+                stroke-width: 2;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+                fill: none;
+            }
+        `;
+        shadow.appendChild(style);
+
+        const dock = document.createElement('div');
+        dock.className = 'dock';
+
+        const aiBtn = document.createElement('button');
+        aiBtn.className = 'btn btn-ai';
+        aiBtn.title = 'AI Solve Quiz';
+        aiBtn.innerHTML = `<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>`;
+        aiBtn.onclick = solveWithAi;
+
+        const keysBtn = document.createElement('button');
+        keysBtn.className = 'btn';
+        keysBtn.title = 'Set API Keys';
+        keysBtn.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+        keysBtn.onclick = () => {
+            const key = prompt('Enter your Groq (gsk_...) or NVIDIA (nvapi-...) API key(s):', rawAiKeys);
+            if (key !== null) {
+                rawAiKeys = key.trim();
+                localStorage.setItem('coursera_ai_keys', rawAiKeys);
+                localStorage.setItem('coursera_groq_api_key', rawAiKeys);
+                log('API Keys updated.');
+            }
         };
 
-        w.appendChild(btn);
-        document.body.appendChild(w);
+        dock.appendChild(aiBtn);
+        dock.appendChild(keysBtn);
+        shadow.appendChild(dock);
+        document.body.appendChild(host);
     }
 
-    window.addEventListener('keydown', (e) => {
-        if (e.altKey && e.key === 'q') {
-            const ans = prompt('Enter answers (e.g., 1, 3, 1+2, 4):');
-            if (ans) executeSolver(ans);
-        }
-    });
-
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', createWidget);
+        document.addEventListener('DOMContentLoaded', createUi);
     } else {
-        createWidget();
+        createUi();
     }
 })();

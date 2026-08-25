@@ -1,29 +1,36 @@
-I am taking a quiz/assignment, and I need you to solve it and give me the answers in a very specific format so that my automation script can read it. 
+# Coursera Quiz Solver AI Prompt
 
-Here are the strict formatting rules for your output:
-1. Output ONLY a single line of text containing the answers separated by a comma and a space (e.g., Answer1, Answer2, Answer3).
-2. Do not include ANY conversational text, explanations, or markdown blocks. Just the raw string.
-3. For Single-Choice questions (Radio buttons): Provide the 1-based index of the correct option. (e.g., if the 3rd option is correct, output '3').
-4. For Multiple-Choice questions (Checkboxes): Provide the 1-based indices of all correct options separated by a plus sign (+). (e.g., if the 1st and 4th options are correct, output '1+4').
-5. For Text/Number input boxes: Provide the exact text or number. 
-   - If a text answer contains commas, YOU MUST wrap the entire text answer in double quotes (e.g., `"Hello, World"`).
-   - If a single question contains MULTIPLE blanks/boxes to fill (like a multi-part math puzzle), separate each blank's answer with a plus sign (+). (e.g., `"Box 1 Answer"+"Box 2 Answer"` or `5+10+15`).
-6. The order of your answers must perfectly match the order of the questions.
+Use this prompt when pasting quiz questions into an external AI (ChatGPT, Claude, Gemini, Groq, DeepSeek) to get the exact answer format required for the **Manual Fill** button.
 
-Example Input from me:
-Q1: What is 2+2? (Radio)
-- 3
-- 4
-- 5
-Q2: Which are colors? (Checkbox)
-- Apple
-- Red
-- Car
-- Blue
-Q3: Type the phrase "Hello, friend" (Text)
-Q4: Fill in the 3 boxes: 2+2= [ ], 3+3= [ ], 4+4= [ ]
+---
 
-Example Output from you:
-2, 2+4, "Hello, friend", 4+6+8
+## 📋 Copy & Paste Prompt
 
-Now, please wait for me to provide the questions, or solve the questions I have attached, and give me the final formatted string:
+Copy the prompt below, paste it into your AI chatbot, and append your copied quiz questions at the end:
+
+```text
+You are an expert assessment solver. Solve the following quiz questions with 100% accuracy.
+
+Rules for output format:
+1. Provide ONLY the final answer string on a single line.
+2. Do NOT include any explanations, markdown code blocks, question numbers, or extra text.
+3. Separate each question's answer with a comma (,).
+4. For single-choice (radio) questions: Output the 1-based option index (e.g. 2).
+5. For multi-choice (checkbox) questions: Output the 1-based option indices separated by + (e.g. 1+3).
+6. For text or numeric input blanks: Output the exact answer string. If there are multiple blanks in one question, join them with + (e.g. 12.5+true). If an answer contains a comma, wrap it in double quotes (e.g. "Smith, John").
+
+Example output format:
+1, 3, 1+4, 2, "Paris, France", 4+5
+
+Questions:
+[PASTE YOUR QUIZ QUESTIONS HERE]
+```
+
+---
+
+## 💡 How to Use:
+1. Copy the quiz questions from Coursera (or use `Plain Copy.js` to strip hidden compliance traps).
+2. Paste the prompt above along with your questions into your AI chatbot.
+3. Copy the single-line answer output from the AI (e.g. `1, 3, 1+4, 2, 4`).
+4. On Coursera's quiz attempt page, click the **Manual Fill** button on the bottom dock.
+5. Paste the answer string into the prompt and press **Enter** — the script will automatically select the choices, fill text blanks, check the honor code, and submit.
