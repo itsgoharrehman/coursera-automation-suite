@@ -1,0 +1,19 @@
+{
+  "name": "coursera-automation-suite",
+  "version": "1.0.0",
+  "description": "Tampermonkey userscript suite for Coursera video playback pacing, module navigation, and study automation.",
+  "keywords": [
+    "automation",
+    "browser-automation",
+    "coursera",
+    "javascript",
+    "learning-tools",
+    "productivity",
+    "tampermonkey",
+    "userscript",
+    "video-playback",
+    "web-automation"
+  ],
+  "author": "Gohar Rehman <goharrehmanfsd260@gmail.com> (https://github.com/itsgoharrehman)",
+  "license": "MIT"
+}
