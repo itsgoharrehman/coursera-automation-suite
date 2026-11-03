@@ -1,0 +1,35 @@
+name: Bug Report
+description: Report a broken selector, UI overlap, or playback pacing defect.
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please provide details to help reproduce and fix this userscript issue.
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser, extension (Tampermonkey/Violentmonkey), and script version.
+      placeholder: "e.g., Chrome 124, Tampermonkey 5.1, Auto Skip Pro"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: Which course page or action encountered the issue?
+      placeholder: |
+        1. Navigate to video lecture
+        2. Let video reach 100%
+        3. Observe auto-skip modal failure
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Error Traceback or Description
+      description: Include browser console error logs if available.
+    validations:
+      required: true
