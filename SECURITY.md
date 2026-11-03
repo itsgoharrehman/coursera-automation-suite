@@ -2,22 +2,25 @@
 
 ## Supported Versions
 
-| Version | Supported |
-|---|---|
-| Default Branch (main) | Yes |
+| Version | Supported | Security Maintenance |
+| :--- | :--- | :--- |
+| 1.0.x | Yes | Active maintenance |
+| < 1.0.0 | No | Deprecated |
 
-## Reporting a Vulnerability
+---
 
-We take the security of this repository and our software seriously. If you believe you have identified a vulnerability, security flaw, or credential exposure, please report it immediately through private disclosure channels.
+## Vulnerability Disclosure Protocol
+
+If you identify a security issue, unsafe DOM injection, or privilege escalation defect in these userscripts, please report it via private email:
 
 * **Security Contact**: goharrehmanfsd260@gmail.com
-* **Maintainer**: Gohar Rehman (@itsgoharrehman)
+* **Repository Maintainer**: Gohar Rehman (@itsgoharrehman)
+* **Response SLA**: Acknowledgment within 48 hours; resolution plan within 5 business days.
 
-### Vulnerability Report Details
-When reporting a vulnerability, please provide:
-* A detailed description of the issue and potential security impact.
-* Exact step-by-step reproduction instructions or a minimal proof-of-concept.
-* Specific affected files, functions, or endpoints.
+---
 
-### Responsible Disclosure
-Please do not open public GitHub issues or public pull requests detailing undisclosed vulnerabilities. Reports will be acknowledged within 48 hours and investigated promptly.
+## Userscript Security Invariants
+
+1. **Zero External Requests**: Scripts must not make unauthorized outbound network calls (`GM_xmlhttpRequest` or `fetch`) to third-party servers. All data processing occurs locally within the browser session.
+2. **Credential Safety**: Scripts are strictly restricted from inspecting session cookies, authorization headers, or user password fields.
+3. **Safe DOM Injection**: All UI elements (overlays, speed controls) must be created using safe DOM APIs without unsanitized string evaluation (`eval` or raw `innerHTML`).
